@@ -560,6 +560,7 @@ model SalesInvoiceItem {
   id             String            @id @default(cuid())
   salesInvoiceId String
   productId      String
+  inputParameters Json?
   quantity       Decimal           @db.Decimal(14, 2)
   rate           Decimal           @db.Decimal(14, 2)
   amount         Decimal           @db.Decimal(14, 2)

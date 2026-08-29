@@ -438,11 +438,11 @@ function QuotationsContent() {
                               items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
                               value={row.productId}
                               onValueChange={(v) => {
-                                updateItem(row.key, { productId: v });
                                 const product = productsQuery.data?.find((p) => p.id === v);
-                                if (product) {
-                                  updateItem(row.key, { rate: product.defaultSellingRate.toString() });
-                                }
+                                updateItem(row.key, { 
+                                  productId: v,
+                                  ...(product ? { rate: product.defaultSellingRate.toString() } : {})
+                                });
                               }}
                               placeholder="Select product"
                               triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
@@ -706,8 +706,7 @@ function QuotationsContent() {
                                 <div className="space-y-2 w-56">
                                   <Label>Receiving/selling location</Label>
                                   <Select
-                                    items={Object.fromEntries((locationsQuery.data ?? []).map((l) => [l.id, l.name]))}
-                                    value={convertLocationId}
+                                    value={convertLocationId || ''}
                                     onValueChange={(v) => setConvertLocationId(v ?? '')}
                                   >
                                     <SelectTrigger>

@@ -63,17 +63,61 @@ interface Paginated<T> {
   totalPages: number;
 }
 
+const SIZE_OPTIONS = [
+  { value: 'FIX', label: 'Fix (custom width)' },
+  { value: '6', label: '6 in (standard)' },
+  { value: '8', label: '8 in (standard)' },
+  { value: '12', label: '12 in (standard)' },
+  { value: '18', label: '18 in (standard)' },
+  { value: '24', label: '24 in (standard)' },
+  { value: '36', label: '36 in (standard)' },
+  { value: '48', label: '48 in (standard)' },
+  { value: '52', label: '52 in (standard)' },
+  { value: 'SELF', label: 'Self (enter sq ft directly)' },
+];
+
 interface DraftItemRow {
   key: number;
   productId: string;
+  description: string;
+  sizeOption: string;
   quantity: string;
+  width: string;
+  length: string;
+  sqft: string;
   rate: string;
 }
 
 let rowKeySeq = 0;
 function newRow(): DraftItemRow {
   rowKeySeq += 1;
-  return { key: rowKeySeq, productId: '', quantity: '', rate: '' };
+  return { key: rowKeySeq, productId: '', description: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
+}
+
+function previewSqft(row: DraftItemRow): number | null {
+  const sizeOption = row.sizeOption || 'FIX';
+  if (sizeOption === 'SELF') {
+    const sqft = Number(row.sqft);
+    return Number.isFinite(sqft) && sqft > 0 ? sqft : null;
+  }
+  const quantity = Number(row.quantity);
+  const length = Number(row.length);
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(length) || length <= 0) return null;
+  const width = sizeOption === 'FIX' ? Number(row.width) : Number(sizeOption);
+  if (!Number.isFinite(width) || width <= 0) return null;
+  return Math.round(((quantity * width * length) / 144) * 100) / 100;
+}
+
+function isRowComplete(row: DraftItemRow): boolean {
+  if (!row.productId || !row.rate) return false;
+  return previewSqft(row) !== null;
+}
+
+function dimensionSummary(p: any): string {
+  if (!p.sizeOption) return '—';
+  if (p.sizeOption === 'SELF') return 'Sq ft entered directly';
+  const width = p.width != null ? p.width : (p.sizeOption !== 'FIX' ? p.sizeOption : '?');
+  return `${p.quantity ?? '?'} pc(s) × ${width}in × ${p.length ?? '?'}in`;
 }
 
 export default function SalesInvoicesPage() {
@@ -203,7 +247,20 @@ function SalesInvoicesContent() {
         locationId: effectiveLocationId,
         discountAmount: Number(discountAmount) || 0,
         termsText: termsText || undefined,
-        items: validItems.map((r) => ({ productId: r.productId, quantity: Number(r.quantity), rate: Number(r.rate) })),
+        items: validItems.map((r) => ({
+          productId: r.productId,
+          inputParameters: {
+            description: r.description || undefined,
+            sizeOption: r.sizeOption || 'FIX',
+            quantity: r.quantity ? Number(r.quantity) : undefined,
+            width: r.width ? Number(r.width) : undefined,
+            length: r.length ? Number(r.length) : undefined,
+            sqft: r.sqft ? Number(r.sqft) : undefined,
+            rate: Number(r.rate),
+          },
+          quantity: previewSqft(r) ?? 0,
+          rate: Number(r.rate),
+        })),
       });
       toast.success('Sales invoice created as draft');
       setFormOpen(false);
@@ -258,8 +315,7 @@ function SalesInvoicesContent() {
                 <div className="space-y-2">
                   <Label>Location</Label>
                   <Select
-                    items={Object.fromEntries((locationsQuery.data ?? []).map((l) => [l.id, l.name]))}
-                    value={effectiveLocationId}
+                    value={effectiveLocationId || ''}
                     onValueChange={(v) => setLocationId(v ?? '')}
                   >
                     <SelectTrigger>
@@ -287,49 +343,113 @@ function SalesInvoicesContent() {
               <div className="space-y-2">
                 <Label>Items</Label>
                 <div className="overflow-x-auto rounded-lg border border-border/70">
-                  <table className="w-full text-sm min-w-[800px]">
+                  <table className="w-full text-sm min-w-[1000px]">
                     <thead>
                       <tr className="border-b bg-muted/40 text-xs text-muted-foreground divide-x divide-border/50">
-                        <th className="w-[45%] px-2 py-1.5 text-left font-medium">Product</th>
-                        <th className="w-[18%] px-2 py-1.5 text-left font-medium">Qty (sq ft)</th>
-                        <th className="w-[18%] px-2 py-1.5 text-left font-medium">Rate</th>
-                        <th className="w-[15%] px-2 py-1.5 text-right font-medium">Amount</th>
+                        <th className="w-[20%] px-2 py-1.5 text-left font-medium">Product</th>
+                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Description</th>
+                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Size</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Qty</th>
+                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">W</th>
+                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">L</th>
+                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">Rate</th>
+                        <th className="w-[9%] px-2 py-1.5 text-right font-medium">Result</th>
+                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount</th>
                         <th className="w-8" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
                       {items.map((row, idx) => {
-                        const amount = row.quantity && row.rate ? Number(row.quantity) * Number(row.rate) : null;
+                        const sqft = previewSqft(row);
+                        const amount = sqft !== null && row.rate ? sqft * Number(row.rate) : null;
                         const isLastBlankRow = idx === items.length - 1 && !row.productId;
-                        const warning = stockWarning(row);
                         return (
-                          <tr key={row.key} className="divide-x divide-border/50 align-top">
-                            <td className="p-0">
+                          <tr key={row.key} className="divide-x divide-border/50">
+                            <td className="p-0 align-top">
                               <SearchableSelect
                                 items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
                                 value={row.productId}
                                 onValueChange={(val) => {
-                                  updateItem(row.key, { productId: val });
                                   const product = productsQuery.data?.find((p) => p.id === val);
-                                  if (product) {
-                                    updateItem(row.key, { rate: product.defaultSellingRate.toString() });
-                                  }
+                                  updateItem(row.key, { 
+                                    productId: val,
+                                    ...(product ? { rate: product.defaultSellingRate.toString() } : {})
+                                  });
                                 }}
                                 placeholder="Select product"
                                 triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
                               />
-                              {warning && <p className="mt-1 text-xs text-warning">{warning}</p>}
                             </td>
-                            <td className="p-0">
+                            <td className="p-0 align-top">
                               <Input
-                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                type="number"
-                                step="0.01"
-                                value={row.quantity}
-                                onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
+                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                placeholder="Optional"
+                                value={row.description}
+                                onChange={(e) => updateItem(row.key, { description: e.target.value })}
                               />
                             </td>
-                            <td className="p-0">
+                            <td className="p-0 align-top">
+                              <Select
+                                items={Object.fromEntries(SIZE_OPTIONS.map((opt) => [opt.value, opt.label]))}
+                                value={row.sizeOption}
+                                onValueChange={(v) => updateItem(row.key, { sizeOption: v ?? 'FIX' })}
+                              >
+                                <SelectTrigger className="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {SIZE_OPTIONS.map((opt) => (
+                                    <SelectItem key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            {row.sizeOption === 'SELF' ? (
+                              <td className="p-0 align-top" colSpan={3}>
+                                <Input
+                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Sq ft"
+                                  value={row.sqft}
+                                  onChange={(e) => updateItem(row.key, { sqft: e.target.value })}
+                                />
+                              </td>
+                            ) : (
+                              <>
+                                <td className="p-0 align-top">
+                                  <Input
+                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                    type="number"
+                                    step="1"
+                                    value={row.quantity}
+                                    onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
+                                  />
+                                </td>
+                                <td className="p-0 align-top">
+                                  <Input
+                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                    type="number"
+                                    step="0.01"
+                                    value={row.width}
+                                    placeholder={row.sizeOption !== 'FIX' ? row.sizeOption : undefined}
+                                    onChange={(e) => updateItem(row.key, { width: e.target.value })}
+                                  />
+                                </td>
+                                <td className="p-0 align-top">
+                                  <Input
+                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                    type="number"
+                                    step="0.01"
+                                    value={row.length}
+                                    onChange={(e) => updateItem(row.key, { length: e.target.value })}
+                                  />
+                                </td>
+                              </>
+                            )}
+                            <td className="p-0 align-top">
                               <Input
                                 className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
                                 type="number"
@@ -338,18 +458,22 @@ function SalesInvoicesContent() {
                                 onChange={(e) => updateItem(row.key, { rate: e.target.value })}
                               />
                             </td>
-                            <td className="px-2 py-1.5 text-right font-mono">{amount !== null ? amount.toLocaleString() : '—'}</td>
-                            <td className="p-0">
+                            <td className="p-2 text-right align-top text-muted-foreground whitespace-nowrap">
+                              {sqft !== null ? `${sqft} sq ft` : '—'}
+                            </td>
+                            <td className="p-2 text-right align-top font-medium whitespace-nowrap">
+                              {amount !== null ? amount.toFixed(2) : '—'}
+                            </td>
+                            <td className="p-0 align-top">
                               {!isLastBlankRow && (
                                 <Button
                                   type="button"
                                   variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
+                                  size="sm"
+                                  className="h-8 w-full rounded-none text-muted-foreground hover:text-destructive"
                                   onClick={() => removeItem(row.key)}
-                                  disabled={items.length <= 1}
                                 >
-                                  ✕
+                                  ×
                                 </Button>
                               )}
                             </td>
@@ -453,26 +577,33 @@ function SalesInvoicesContent() {
                               <div className="text-sm space-y-1 py-2">
                                 {inv.termsText && <p className="text-muted-foreground">Terms: {inv.termsText}</p>}
                                 {inv.cancelReason && <p className="text-destructive">Cancelled: {inv.cancelReason}</p>}
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>Product</TableHead>
-                                      <TableHead className="text-right">Qty</TableHead>
-                                      <TableHead className="text-right">Rate</TableHead>
-                                      <TableHead className="text-right">Amount</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {inv.items.map((item) => (
-                                      <TableRow key={item.id}>
-                                        <TableCell>{item.product.name}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.quantity}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.rate}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.amount}</TableCell>
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Product</TableHead>
+                                        <TableHead>Description</TableHead>
+                                        <TableHead>Size Details</TableHead>
+                                        <TableHead className="text-right">Qty / Result</TableHead>
+                                        <TableHead className="text-right">Rate</TableHead>
+                                        <TableHead className="text-right">Amount</TableHead>
                                       </TableRow>
-                                    ))}
-                                    <TableRow>
-                                      <TableCell colSpan={3} className="text-right text-muted-foreground">
+                                    </TableHeader>
+                                    <TableBody>
+                                      {inv.items.map((item) => {
+                                        const p = (item as any).inputParameters || {};
+                                        return (
+                                          <TableRow key={item.id}>
+                                            <TableCell>{item.product.name}</TableCell>
+                                            <TableCell className="text-muted-foreground">{p.description || '—'}</TableCell>
+                                            <TableCell className="text-muted-foreground">{dimensionSummary(p)}</TableCell>
+                                            <TableCell className="text-right font-mono">{Number(item.quantity).toLocaleString()}</TableCell>
+                                            <TableCell className="text-right font-mono">{Number(item.rate).toLocaleString()}</TableCell>
+                                            <TableCell className="text-right font-mono">{Number(item.amount).toLocaleString()}</TableCell>
+                                          </TableRow>
+                                        );
+                                      })}
+                                      <TableRow>
+                                        <TableCell colSpan={5} className="text-right text-muted-foreground">
                                         Subtotal / Discount
                                       </TableCell>
                                       <TableCell className="text-right font-mono">

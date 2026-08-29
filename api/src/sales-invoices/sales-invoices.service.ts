@@ -108,11 +108,12 @@ export class SalesInvoicesService {
           data: {
             salesInvoiceId: invoice.id,
             productId: item.productId,
+            inputParameters: item.inputParameters,
             quantity: item.quantity,
             rate: item.rate,
             amount: itemAmounts[i],
             sortOrder: i,
-          },
+          } as any,
         });
       }
 
@@ -167,11 +168,12 @@ export class SalesInvoicesService {
           data: {
             salesInvoiceId: invoice.id,
             productId: item.productId,
+            inputParameters: item.inputParameters,
             quantity: item.computedQuantity,
             rate: item.computedRate,
             amount: item.computedAmount,
             sortOrder: i,
-          },
+          } as any,
         });
       }
 
@@ -228,11 +230,12 @@ export class SalesInvoicesService {
           data: {
             salesInvoiceId: id,
             productId: item.productId,
+            inputParameters: item.inputParameters,
             quantity: item.quantity,
             rate: item.rate,
             amount: itemAmounts[i],
             sortOrder: i,
-          },
+          } as any,
         });
       }
 

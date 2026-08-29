@@ -1,32 +1,7 @@
-# Dependencies
 node_modules/
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Next.js / React
-.next/
-out/
-build/
-dist/
-
-# NestJS / TypeScript
-api/dist/
-
-# Database / Local Env
 .local-postgres/
-.env
-.env.*
-!.env.example
-*.sqlite
-*.db
-
-# macOS / Windows
-.DS_Store
-Thumbs.db
-
-# Misc
+.local-postgres.stdout.log
+.local-postgres.stderr.log
 backup/
+api/node_modules/
+web/node_modules/

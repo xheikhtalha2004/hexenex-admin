@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 
 export function SearchableSelect({ value, onValueChange, items, placeholder = "Select...", triggerClassName = "" }) {
   const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
   
   const searchLower = search.toLowerCase();
   const filtered = items
@@ -20,11 +21,26 @@ export function SearchableSelect({ value, onValueChange, items, placeholder = "S
       if (!aStarts && bStarts) return 1;
       return aLower.localeCompare(bLower);
     });
+
+  const selectedLabel = items.find((i) => i.value === value)?.label;
   
   return (
-    <Select value={value || undefined} onValueChange={onValueChange}>
+    <Select 
+      value={value} 
+      onValueChange={(v) => {
+        onValueChange(v);
+        setOpen(false);
+      }}
+      open={open}
+      onOpenChange={(isOpen) => {
+        setOpen(isOpen);
+        if (!isOpen) setSearch('');
+      }}
+    >
       <SelectTrigger className={cn(!value ? "text-muted-foreground" : "", triggerClassName)}>
-        <SelectValue placeholder={placeholder} />
+        <span className="flex flex-1 text-left truncate">
+          {selectedLabel || placeholder}
+        </span>
       </SelectTrigger>
       <SelectContent>
         <div className="p-2 border-b sticky top-0 bg-popover z-10" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
@@ -32,7 +48,6 @@ export function SearchableSelect({ value, onValueChange, items, placeholder = "S
             placeholder="Search..." 
             value={search} 
             onChange={(e) => setSearch(e.target.value)} 
-            onKeyDown={(e) => e.stopPropagation()}
             autoFocus
           />
         </div>
@@ -40,7 +55,10 @@ export function SearchableSelect({ value, onValueChange, items, placeholder = "S
           <div className="p-2 text-sm text-muted-foreground text-center">No results</div>
         ) : (
           filtered.map(item => (
-            <SelectItem key={item.value} value={item.value}>
+            <SelectItem 
+              key={item.value} 
+              value={item.value}
+            >
               {item.label}
             </SelectItem>
           ))

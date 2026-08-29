@@ -15,6 +15,9 @@ class SalesInvoiceItemDto {
   @IsString()
   productId!: string;
 
+  @IsOptional()
+  inputParameters?: any;
+
   @IsNumber()
   @IsPositive()
   quantity!: number;
