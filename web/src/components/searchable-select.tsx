@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils';
 
 export function SearchableSelect({ value, onValueChange, items, placeholder = "Select...", triggerClassName = "" }) {
   const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
   
   const searchLower = search.toLowerCase();
   const filtered = items
@@ -26,14 +25,11 @@ export function SearchableSelect({ value, onValueChange, items, placeholder = "S
   
   return (
     <Select 
-      value={value} 
+      value={value || null} 
       onValueChange={(v) => {
         onValueChange(v);
-        setOpen(false);
       }}
-      open={open}
       onOpenChange={(isOpen) => {
-        setOpen(isOpen);
         if (!isOpen) setSearch('');
       }}
     >

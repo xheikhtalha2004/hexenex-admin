@@ -706,7 +706,7 @@ function QuotationsContent() {
                                 <div className="space-y-2 w-56">
                                   <Label>Receiving/selling location</Label>
                                   <Select
-                                    value={convertLocationId || ''}
+                                    value={convertLocationId || null}
                                     onValueChange={(v) => setConvertLocationId(v ?? '')}
                                   >
                                     <SelectTrigger>

@@ -315,7 +315,7 @@ function SalesInvoicesContent() {
                 <div className="space-y-2">
                   <Label>Location</Label>
                   <Select
-                    value={effectiveLocationId || ''}
+                    value={effectiveLocationId || null}
                     onValueChange={(v) => setLocationId(v ?? '')}
                   >
                     <SelectTrigger>
