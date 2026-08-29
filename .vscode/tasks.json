@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Slabline locally",
+      "type": "process",
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "${workspaceFolder}\\scripts\\run-local-dev.cjs"
+      ],
+      "isBackground": true,
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}
