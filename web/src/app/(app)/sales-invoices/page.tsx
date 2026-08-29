@@ -370,11 +370,7 @@ function SalesInvoicesContent() {
                                 items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
                                 value={row.productId}
                                 onValueChange={(val) => {
-                                  const product = productsQuery.data?.find((p) => p.id === val);
-                                  updateItem(row.key, { 
-                                    productId: val,
-                                    ...(product ? { rate: product.defaultSellingRate.toString() } : {})
-                                  });
+                                  updateItem(row.key, { productId: val });
                                 }}
                                 placeholder="Select product"
                                 triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"

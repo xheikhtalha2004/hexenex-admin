@@ -438,11 +438,7 @@ function QuotationsContent() {
                               items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
                               value={row.productId}
                               onValueChange={(v) => {
-                                const product = productsQuery.data?.find((p) => p.id === v);
-                                updateItem(row.key, { 
-                                  productId: v,
-                                  ...(product ? { rate: product.defaultSellingRate.toString() } : {})
-                                });
+                                updateItem(row.key, { productId: v });
                               }}
                               placeholder="Select product"
                               triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
