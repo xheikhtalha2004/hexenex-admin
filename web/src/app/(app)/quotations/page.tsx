@@ -27,6 +27,7 @@ interface Product {
 }
 interface QuotationItemInputParameters {
   description: string | null;
+  locationId?: string | null;
   sizeOption: string | null;
   quantity: number | null;
   width: number | null;
@@ -83,6 +84,7 @@ interface DraftItemRow {
   key: number;
   productId: string;
   description: string;
+  locationId: string;
   sizeOption: string;
   quantity: string;
   width: string;
@@ -94,7 +96,7 @@ interface DraftItemRow {
 let rowKeySeq = 0;
 function newRow(productId = ''): DraftItemRow {
   rowKeySeq += 1;
-  return { key: rowKeySeq, productId, description: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
+  return { key: rowKeySeq, productId, description: '', locationId: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
 }
 
 /** Client-side mirror of the server formula, for a live preview only — the server remains
@@ -247,6 +249,7 @@ function QuotationsContent() {
           key: rowKeySeq,
           productId: item.product.id,
           description: p.description ?? '',
+          locationId: p.locationId ?? '',
           sizeOption: p.sizeOption ?? 'FIX',
           quantity: p.quantity != null ? String(p.quantity) : '',
           width: p.width != null ? String(p.width) : '',
@@ -343,7 +346,7 @@ function QuotationsContent() {
       validUntil: validUntil || undefined,
       items: validItems.map((r) => ({
         productId: r.productId,
-        description: r.description || undefined,
+        locationId: r.locationId || defaultFactoryLocation?.id || undefined,
         sizeOption: r.sizeOption || 'FIX',
         quantity: r.quantity ? Number(r.quantity) : undefined,
         width: r.width ? Number(r.width) : undefined,
@@ -413,6 +416,16 @@ function QuotationsContent() {
                     onValueChange={(v) => setCustomerId(v ?? '')}
                     placeholder="Select customer"
                     triggerClassName="flex-1"
+                    onTriggerKeyDown={(event) => {
+                      if (event.key === 'Tab' && !event.shiftKey) {
+                        event.preventDefault();
+                        const firstRow = items[0];
+                        const targetId = firstRow.sizeOption === 'SELF'
+                          ? `quotation-product-${firstRow.key}`
+                          : `quotation-quantity-${firstRow.key}`;
+                        document.getElementById(targetId)?.focus();
+                      }
+                    }}
                   />
                   {canAddCustomer && (
                     <Button type="button" variant="outline" size="icon" title="Add new customer" onClick={() => setNewCustomerOpen(true)}>
@@ -457,7 +470,7 @@ function QuotationsContent() {
                     <tr className="border-b bg-muted/40 text-xs text-muted-foreground divide-x divide-border/50">
                       <th className="w-[7%] px-2 py-1.5 text-left font-medium">Quantity</th>
                       <th className="w-[18%] px-2 py-1.5 text-left font-medium">Product</th>
-                      <th className="w-[12%] px-2 py-1.5 text-left font-medium">Description</th>
+                      <th className="w-[12%] px-2 py-1.5 text-left font-medium">Location</th>
                       <th className="w-[13%] px-2 py-1.5 text-left font-medium">Size Formula</th>
                       <th className="w-[8%] px-2 py-1.5 text-left font-medium">Width</th>
                       <th className="w-[8%] px-2 py-1.5 text-left font-medium">Length</th>
@@ -479,6 +492,7 @@ function QuotationsContent() {
                               <div className="px-2 py-1.5 text-muted-foreground">—</div>
                             ) : (
                               <Input
+                                id={`quotation-quantity-${row.key}`}
                                 className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
                                 type="number"
                                 step="1"
@@ -495,16 +509,28 @@ function QuotationsContent() {
                                 updateItem(row.key, { productId: v });
                               }}
                               placeholder="Select product"
+                              triggerId={`quotation-product-${row.key}`}
+                              openOnFocus
                               triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
                             />
                           </td>
                           <td className="p-0 align-top">
-                            <Input
-                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                              placeholder="Optional"
-                              value={row.description}
-                              onChange={(e) => updateItem(row.key, { description: e.target.value })}
-                            />
+                            <Select
+                              items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
+                              value={row.locationId || defaultFactoryLocation?.id || ''}
+                              onValueChange={(value) => updateItem(row.key, { locationId: value ?? defaultFactoryLocation?.id ?? '' })}
+                            >
+                              <SelectTrigger className="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none">
+                                <SelectValue placeholder="Select location" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(locationsQuery.data ?? []).map((location) => (
+                                  <SelectItem key={location.id} value={location.id}>
+                                    {location.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </td>
                           <td className="p-0 align-top">
                             <Select

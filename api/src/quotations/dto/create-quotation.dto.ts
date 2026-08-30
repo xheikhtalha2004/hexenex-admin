@@ -21,6 +21,10 @@ class QuotationItemDto {
   @IsString()
   description?: string;
 
+  @IsOptional()
+  @IsString()
+  locationId?: string;
+
   /**
    * Shape is strategy-defined. For the default SQFT_DIMENSIONS strategy: `sizeOption` picks
    * "FIX" (use the typed `width`), a standard inch width (e.g. "8"), or "SELF" (use the typed

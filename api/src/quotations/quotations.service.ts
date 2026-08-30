@@ -92,6 +92,7 @@ export class QuotationsService {
   private rawInputParameters(item: CreateQuotationDto['items'][number]): Prisma.InputJsonValue {
     return {
       description: item.description ?? null,
+      locationId: item.locationId ?? null,
       sizeOption: item.sizeOption ?? null,
       quantity: item.quantity ?? null,
       width: item.width ?? null,

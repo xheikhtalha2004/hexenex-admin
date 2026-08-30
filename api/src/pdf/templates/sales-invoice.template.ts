@@ -47,7 +47,6 @@ export function salesInvoiceHtml(
   const columns = [
     { header: 'Quantity', align: 'right' as const },
     { header: 'Product' },
-    { header: 'Description' },
     { header: 'Width', align: 'right' as const },
     { header: 'Length', align: 'right' as const },
     { header: 'Rate', align: 'right' as const },
@@ -58,7 +57,6 @@ export function salesInvoiceHtml(
   const rows = invoice.items.map((item) => {
     const p = item.inputParameters as Record<string, unknown> | undefined;
     const sizeOption = typeof p?.sizeOption === 'string' ? p.sizeOption : '';
-    const desc = p && typeof p.description === 'string' ? p.description : '';
 
     let w = '?';
     let l = '?';
@@ -81,7 +79,6 @@ export function salesInvoiceHtml(
     return [
       qty,
       esc(item.product.name),
-      desc ? esc(desc) : '-',
       w,
       l,
       formatMoney(item.rate),
