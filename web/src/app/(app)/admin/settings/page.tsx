@@ -41,19 +41,19 @@ export default function CompanySettingsPage() {
   });
 
   useEffect(() => {
-    if (settingsQuery.data?.data) {
+    if (settingsQuery.data) {
       setFormData({
-        companyName: settingsQuery.data.data.companyName || '',
-        addressLine1: settingsQuery.data.data.addressLine1 || '',
-        addressLine2: settingsQuery.data.data.addressLine2 || '',
-        phone: settingsQuery.data.data.phone || '',
-        email: settingsQuery.data.data.email || '',
-        logoUrl: settingsQuery.data.data.logoUrl || '',
-        invoiceTermsDefaultText: settingsQuery.data.data.invoiceTermsDefaultText || '',
-        deliveryTermsDefaultText: settingsQuery.data.data.deliveryTermsDefaultText || '',
+        companyName: settingsQuery.data.companyName || '',
+        addressLine1: settingsQuery.data.addressLine1 || '',
+        addressLine2: settingsQuery.data.addressLine2 || '',
+        phone: settingsQuery.data.phone || '',
+        email: settingsQuery.data.email || '',
+        logoUrl: settingsQuery.data.logoUrl || '',
+        invoiceTermsDefaultText: settingsQuery.data.invoiceTermsDefaultText || '',
+        deliveryTermsDefaultText: settingsQuery.data.deliveryTermsDefaultText || '',
       });
     }
-  }, [settingsQuery.data?.data]);
+  }, [settingsQuery.data]);
 
   const updateMutation = useMutation({
     mutationFn: (data: Partial<CompanySettings>) => apiClient.patch('/company-settings', data),

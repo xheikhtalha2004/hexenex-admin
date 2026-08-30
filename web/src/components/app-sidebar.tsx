@@ -29,7 +29,7 @@ export function AppSidebar() {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
   
-  const appName = settingsQuery.data?.data?.companyName || 'Marble & Granite ERP';
+  const appName = settingsQuery.data?.companyName || 'Marble & Granite ERP';
 
   return (
     <Sidebar collapsible="icon">
