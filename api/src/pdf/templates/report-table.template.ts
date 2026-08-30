@@ -2,6 +2,7 @@ import {
   CompanySettingsForTemplate,
   documentShell,
   esc,
+  formatDate,
   formatMoney,
   Money,
   MetaRow,
@@ -67,6 +68,7 @@ export function reportTableHtml(
     company,
     title,
     documentNumber: generatedLabel,
+    titleMeta: [{ label: 'Generated', value: formatDate(new Date()) }],
     meta,
     bodyHtml,
   });

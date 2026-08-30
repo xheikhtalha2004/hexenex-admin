@@ -36,6 +36,7 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const ignoreNextFocusOpen = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const optionElements = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const filteredItems = useMemo(() => {
@@ -77,9 +78,9 @@ export function SearchableSelect({
     onValueChange(nextValue);
     setOpen(false);
     setSearch('');
-    requestAnimationFrame(() => {
+    window.setTimeout(() => {
       ignoreNextFocusOpen.current = false;
-    });
+    }, 500);
   }
 
   function moveActive(direction: 1 | -1) {
@@ -112,12 +113,17 @@ export function SearchableSelect({
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
+        ref={triggerRef}
         id={triggerId}
         type="button"
         role="combobox"
         aria-expanded={open}
         aria-label={placeholder}
         onFocus={() => {
+          if (ignoreNextFocusOpen.current) {
+            ignoreNextFocusOpen.current = false;
+            return;
+          }
           if (openOnFocus && !ignoreNextFocusOpen.current) {
             setOpen(true);
             const selectedIndex = filteredItems.findIndex((item) => item.value === value);
@@ -143,6 +149,7 @@ export function SearchableSelect({
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        finalFocus={triggerRef}
         className="w-(--anchor-width) min-w-56 gap-0 overflow-hidden p-0"
       >
         <div className="border-b p-2">

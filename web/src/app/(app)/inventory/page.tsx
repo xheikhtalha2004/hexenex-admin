@@ -42,6 +42,7 @@ interface BalanceRow {
   quantity: string;
   reorderLevel: string | null;
   isLowStock: boolean;
+  isNegativeStock: boolean;
 }
 interface MovementRow {
   id: string;
@@ -109,14 +110,17 @@ function BalancesSection({ locations, categories }: { locations: Location[]; cat
   // DSH-02: the Dashboard's low stock card links here with ?lowStockOnly=true so the filter is
   // already applied on arrival, rather than landing on the unfiltered list.
   const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get('lowStockOnly') === 'true');
+  const [negativeStockOnly, setNegativeStockOnly] = useState(
+    () => searchParams.get('negativeStockOnly') === 'true',
+  );
 
   const balancesQuery = useQuery({
-    queryKey: ['inventory-balances', locationId, categoryId, lowStockOnly],
+    queryKey: ['inventory-balances', locationId, categoryId, lowStockOnly, negativeStockOnly],
     queryFn: () =>
       apiClient.get<BalanceRow[]>(
         `/inventory/balances?${locationId !== 'ALL' ? `locationId=${locationId}&` : ''}${
           categoryId !== 'ALL' ? `categoryId=${categoryId}&` : ''
-        }${lowStockOnly ? 'lowStockOnly=true' : ''}`,
+        }${lowStockOnly ? 'lowStockOnly=true&' : ''}${negativeStockOnly ? 'negativeStockOnly=true' : ''}`,
       ),
   });
 
@@ -168,8 +172,23 @@ function BalancesSection({ locations, categories }: { locations: Location[]; cat
               </SelectContent>
             </Select>
           </div>
-          <Button variant={lowStockOnly ? 'default' : 'outline'} onClick={() => setLowStockOnly((v) => !v)}>
+          <Button
+            variant={lowStockOnly ? 'default' : 'outline'}
+            onClick={() => {
+              setNegativeStockOnly(false);
+              setLowStockOnly((v) => !v);
+            }}
+          >
             Low stock only
+          </Button>
+          <Button
+            variant={negativeStockOnly ? 'destructive' : 'outline'}
+            onClick={() => {
+              setLowStockOnly(false);
+              setNegativeStockOnly((v) => !v);
+            }}
+          >
+            Negative stock only
           </Button>
         </div>
 
@@ -197,7 +216,11 @@ function BalancesSection({ locations, categories }: { locations: Location[]; cat
                     <TableCell className="text-right font-mono">{Number(row.quantity).toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{row.reorderLevel ?? '—'}</TableCell>
                     <TableCell>
-                      {row.isLowStock && <Badge variant="destructive">Low stock</Badge>}
+                      {row.isNegativeStock ? (
+                        <Badge variant="destructive">Negative stock</Badge>
+                      ) : row.isLowStock ? (
+                        <Badge variant="destructive">Low stock</Badge>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))

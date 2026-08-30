@@ -74,7 +74,7 @@ export const PERMISSIONS: PermissionDefinition[] = [
 
   // Bank & cash accounts
   { key: 'accounts.view', groupName: 'Accounts', description: 'View cash and bank account balances' },
-  { key: 'accounts.manage', groupName: 'Accounts', description: 'Add bank accounts and record manual cash entries' },
+  { key: 'accounts.manage', groupName: 'Accounts', description: 'Add bank accounts, record cash entries, and transfer funds' },
 
   // Administration
   { key: 'user.manage', groupName: 'Administration', description: 'Manage users' },

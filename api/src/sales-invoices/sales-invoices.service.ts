@@ -12,7 +12,6 @@ import {
   Prisma,
   QuotationStatus,
   SalesInvoiceStatus,
-  StockShortagePolicy,
   TransactionType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,7 +20,6 @@ import { TransactionsService } from '../transactions/transactions.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { CostingStrategyRegistry } from '../costing/costing-strategy.registry';
 import { CostingStrategy } from '../costing/costing-strategy.interface';
-import { CompanySettingsService } from '../company-settings/company-settings.service';
 import { CustomerLedgerService } from '../customer-ledger/customer-ledger.service';
 import { paginate } from '../common/pagination.dto';
 import { CreateSalesInvoiceDto } from './dto/create-sales-invoice.dto';
@@ -49,7 +47,6 @@ export class SalesInvoicesService {
     private readonly transactions: TransactionsService,
     private readonly numbering: NumberingService,
     private readonly costingRegistry: CostingStrategyRegistry,
-    private readonly companySettings: CompanySettingsService,
     private readonly customerLedger: CustomerLedgerService,
   ) {}
 
@@ -95,6 +92,35 @@ export class SalesInvoicesService {
     return invoice;
   }
 
+  async findForPdf(id: string) {
+    const invoice = await this.findOrThrow(id);
+    const [creator, invoiceLedgerEntry] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: invoice.createdByUserId },
+        select: { fullName: true, email: true },
+      }),
+      this.prisma.customerLedgerEntry.findFirst({
+        where: {
+          salesInvoiceId: invoice.id,
+          entryType: CustomerLedgerEntryType.INVOICE,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const balanceBeforeInvoice = invoiceLedgerEntry
+      ? invoiceLedgerEntry.balanceAfter.minus(invoiceLedgerEntry.amount)
+      : invoice.customer.currentBalance;
+
+    return {
+      ...invoice,
+      previousBalance: balanceBeforeInvoice.isPositive()
+        ? balanceBeforeInvoice
+        : ZERO,
+      preparedByName: creator?.fullName || creator?.email || 'Unknown User',
+    };
+  }
+
   async create(dto: CreateSalesInvoiceDto, actorId: string) {
     const itemAmounts = dto.items.map((item) =>
       new Prisma.Decimal(item.quantity).times(item.rate),
@@ -108,16 +134,20 @@ export class SalesInvoicesService {
     if (totalAmount.isNegative())
       throw new BadRequestException('Discount cannot exceed the subtotal');
     const advanceReceived = new Prisma.Decimal(dto.advanceReceived ?? 0);
-    if (advanceReceived.greaterThan(totalAmount)) {
-      throw new BadRequestException(
-        'Advance received cannot exceed the invoice total',
-      );
-    }
-    const settings = await this.companySettings.get();
     const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
+      const customer = await tx.customer.findUniqueOrThrow({
+        where: { id: dto.customerId },
+      });
+      const previousBalance = customer.currentBalance.isPositive()
+        ? customer.currentBalance
+        : ZERO;
+      if (advanceReceived.greaterThan(previousBalance.plus(totalAmount))) {
+        throw new BadRequestException(
+          "Received cannot exceed the customer's total outstanding balance",
+        );
+      }
       await tx.location.findUniqueOrThrow({ where: { id: dto.locationId } });
 
       const invoiceNumber = await this.numbering.nextNumber(
@@ -177,7 +207,6 @@ export class SalesInvoicesService {
         tx,
         invoiceWithItems,
         actorId,
-        settings,
         strategy,
       );
     });
@@ -192,7 +221,6 @@ export class SalesInvoicesService {
     dto: CreateFromQuotationDto,
     actorId: string,
   ) {
-    const settings = await this.companySettings.get();
     const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
@@ -214,7 +242,25 @@ export class SalesInvoicesService {
           'This quotation has already been converted to a sales invoice',
         );
 
-      await tx.location.findUniqueOrThrow({ where: { id: dto.locationId } });
+      const locationIds = quotation.items.map((item) => {
+        const inputParameters = item.inputParameters as Prisma.JsonObject;
+        return typeof inputParameters.locationId === 'string'
+          ? inputParameters.locationId
+          : null;
+      });
+      if (locationIds.length === 0 || locationIds.some((id) => !id)) {
+        throw new BadRequestException(
+          'Every quotation item must have a location before conversion',
+        );
+      }
+      const uniqueLocationIds = [...new Set(locationIds as string[])];
+      if (uniqueLocationIds.length !== 1) {
+        throw new BadRequestException(
+          'All quotation items must use the same location before conversion',
+        );
+      }
+      const locationId = uniqueLocationIds[0];
+      await tx.location.findUniqueOrThrow({ where: { id: locationId } });
 
       const invoiceNumber = await this.numbering.nextNumber(
         tx,
@@ -224,7 +270,7 @@ export class SalesInvoicesService {
         data: {
           invoiceNumber,
           customerId: quotation.customerId,
-          locationId: dto.locationId,
+          locationId,
           status: SalesInvoiceStatus.DRAFT,
           sourceQuotationId: quotation.id,
           termsText: dto.termsText,
@@ -288,7 +334,6 @@ export class SalesInvoicesService {
         tx,
         invoiceWithItems,
         actorId,
-        settings,
         strategy,
       );
     });
@@ -374,7 +419,6 @@ export class SalesInvoicesService {
   }
 
   async finalize(id: string, actorId: string) {
-    const settings = await this.companySettings.get();
     const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
@@ -393,7 +437,6 @@ export class SalesInvoicesService {
         tx,
         invoice,
         actorId,
-        settings,
         strategy,
       );
     });
@@ -403,28 +446,12 @@ export class SalesInvoicesService {
     tx: Prisma.TransactionClient,
     invoice: InvoiceWithItems,
     actorId: string,
-    settings: { stockShortagePolicy: StockShortagePolicy },
     strategy: CostingStrategy,
   ) {
+    // A finalized invoice is a firm customer commitment. It must be recorded even when the
+    // goods still need to be arranged, so sales are allowed to take inventory below zero.
+    // Negative balances are surfaced separately on the dashboard and inventory page.
     for (const item of invoice.items) {
-      const balance = await tx.inventoryBalance.findUnique({
-        where: {
-          productId_locationId: {
-            productId: item.productId,
-            locationId: invoice.locationId,
-          },
-        },
-      });
-      const currentQty = balance?.quantity ?? ZERO;
-      if (
-        settings.stockShortagePolicy === StockShortagePolicy.PREVENT_NEGATIVE &&
-        currentQty.lessThan(item.quantity)
-      ) {
-        throw new BadRequestException(
-          `Insufficient stock for product ${item.productId} at this location`,
-        );
-      }
-
       const { unitCost } = await strategy.recordConsumption(tx, {
         productId: item.productId,
         locationId: invoice.locationId,
@@ -461,7 +488,7 @@ export class SalesInvoicesService {
       });
     }
 
-    await this.customerLedger.postEntry(tx, {
+    const invoiceLedgerEntry = await this.customerLedger.postEntry(tx, {
       customerId: invoice.customerId,
       entryType: CustomerLedgerEntryType.INVOICE,
       amount: invoice.totalAmount,
@@ -481,6 +508,35 @@ export class SalesInvoicesService {
       createdByUserId: actorId,
       transactionDate: invoice.invoiceDate,
     });
+
+    if (invoice.advanceReceived.greaterThan(ZERO)) {
+      if (invoice.advanceReceived.greaterThan(invoiceLedgerEntry.balanceAfter)) {
+        throw new BadRequestException(
+          "Received cannot exceed the customer's total outstanding balance",
+        );
+      }
+
+      await this.customerLedger.postEntry(tx, {
+        customerId: invoice.customerId,
+        entryType: CustomerLedgerEntryType.PAYMENT,
+        amount: invoice.advanceReceived.negated(),
+        salesInvoiceId: invoice.id,
+        description: `Received with sales invoice ${invoice.invoiceNumber}`,
+        entryDate: invoice.invoiceDate,
+        createdByUserId: actorId,
+      });
+
+      await this.transactions.record(tx, {
+        transactionType: TransactionType.CUSTOMER_PAYMENT,
+        amount: invoice.advanceReceived.negated(),
+        description: `Received with sales invoice ${invoice.invoiceNumber}`,
+        referenceType: 'SalesInvoice',
+        referenceId: invoice.id,
+        customerId: invoice.customerId,
+        createdByUserId: actorId,
+        transactionDate: invoice.invoiceDate,
+      });
+    }
 
     const finalized = await tx.salesInvoice.update({
       where: { id: invoice.id },

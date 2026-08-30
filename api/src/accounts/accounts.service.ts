@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { AddCashDto } from './dto/add-cash.dto';
+import { TransferFundsDto } from './dto/transfer-funds.dto';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -126,6 +127,107 @@ export class AccountsService {
       );
       return entry;
     });
+  }
+
+  /** Moves company funds between Cash and one Bank account. Both account entries and the
+   * audit record are committed together, so an interrupted transfer can never change only
+   * one side or alter the company's combined Bank & Cash total. */
+  async transferFunds(dto: TransferFundsDto, actorId: string) {
+    if (dto.sourceAccountId === dto.destinationAccountId) {
+      throw new BadRequestException(
+        'Source and destination accounts must be different',
+      );
+    }
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const [source, destination] = await Promise.all([
+          tx.account.findUnique({ where: { id: dto.sourceAccountId } }),
+          tx.account.findUnique({
+            where: { id: dto.destinationAccountId },
+          }),
+        ]);
+
+        if (!source || !source.isActive) {
+          throw new BadRequestException('Source account is not available');
+        }
+        if (!destination || !destination.isActive) {
+          throw new BadRequestException('Destination account is not available');
+        }
+
+        const isCashToBank =
+          source.type === AccountType.CASH &&
+          destination.type === AccountType.BANK;
+        const isBankToCash =
+          source.type === AccountType.BANK &&
+          destination.type === AccountType.CASH;
+        if (!isCashToBank && !isBankToCash) {
+          throw new BadRequestException(
+            'Transfers are allowed only between Cash and a Bank account',
+          );
+        }
+
+        const amount = new Prisma.Decimal(dto.amount);
+        if (source.currentBalance.lessThan(amount)) {
+          throw new BadRequestException(
+            `Insufficient balance in ${source.name}`,
+          );
+        }
+
+        const entryDate = dto.entryDate ?? new Date();
+        const remarks = dto.remarks?.trim();
+        const transferLabel = `${source.name} to ${destination.name}`;
+        const sourceEntry = await this.postTransaction(tx, {
+          accountId: source.id,
+          amount: amount.negated(),
+          description: `Transfer to ${destination.name}${remarks ? ` — ${remarks}` : ''}`,
+          entryDate,
+          createdByUserId: actorId,
+        });
+        const destinationEntry = await this.postTransaction(tx, {
+          accountId: destination.id,
+          amount,
+          description: `Transfer from ${source.name}${remarks ? ` — ${remarks}` : ''}`,
+          entryDate,
+          createdByUserId: actorId,
+        });
+
+        await this.audit.log(
+          {
+            userId: actorId,
+            action: 'TRANSFER',
+            entityType: 'AccountTransfer',
+            entityId: `${sourceEntry.id}:${destinationEntry.id}`,
+            afterData: {
+              sourceAccountId: source.id,
+              destinationAccountId: destination.id,
+              amount,
+              remarks: remarks || null,
+              entryDate,
+              description: transferLabel,
+              sourceTransactionId: sourceEntry.id,
+              destinationTransactionId: destinationEntry.id,
+            },
+          },
+          tx,
+        );
+
+        return {
+          sourceAccount: {
+            id: source.id,
+            name: source.name,
+            balanceAfter: sourceEntry.balanceAfter,
+          },
+          destinationAccount: {
+            id: destination.id,
+            name: destination.name,
+            balanceAfter: destinationEntry.balanceAfter,
+          },
+          amount,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   /** Finds the singleton Cash or Cheque Clearing account, creating it on first use. Bank

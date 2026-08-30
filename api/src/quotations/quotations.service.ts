@@ -62,6 +62,19 @@ export class QuotationsService {
     return quotation;
   }
 
+  async findForPdf(id: string) {
+    const quotation = await this.findOrThrow(id);
+    const creator = await this.prisma.user.findUnique({
+      where: { id: quotation.createdByUserId },
+      select: { fullName: true, email: true },
+    });
+
+    return {
+      ...quotation,
+      preparedByName: creator?.fullName || creator?.email || 'Unknown User',
+    };
+  }
+
   private async resolveProfile(calculationProfileId: string | undefined) {
     const profile = calculationProfileId
       ? await this.prisma.quotationCalculationProfile.findUnique({ where: { id: calculationProfileId } })
@@ -102,6 +115,25 @@ export class QuotationsService {
     };
   }
 
+  private validateReceivedAmount(
+    customerBalance: Prisma.Decimal,
+    quotationTotal: number,
+    received: number,
+  ) {
+    // Customer credit (a negative balance) must not reduce the amount that can
+    // be received against a new quotation. Only outstanding receivables carry
+    // forward as the quotation's Previous Balance.
+    const previousBalance = customerBalance.isPositive()
+      ? customerBalance
+      : new Prisma.Decimal(0);
+    const receivedLimit = previousBalance.plus(quotationTotal);
+    if (new Prisma.Decimal(received).greaterThan(receivedLimit)) {
+      throw new BadRequestException(
+        "Received cannot exceed the customer's total amount (previous balance plus gross total)",
+      );
+    }
+  }
+
   async create(dto: CreateQuotationDto, actorId: string) {
     const profile = await this.resolveProfile(dto.calculationProfileId);
     const computed = this.computeItems(profile, dto.items);
@@ -110,10 +142,14 @@ export class QuotationsService {
     const totalAmount = subtotal - discountAmount;
     const advanceReceived = dto.advanceReceived ?? 0;
     if (totalAmount < 0) throw new BadRequestException('Discount cannot exceed the subtotal');
-    if (advanceReceived > totalAmount) throw new BadRequestException('Advance received cannot exceed the total amount');
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
+      this.validateReceivedAmount(
+        customer.currentBalance,
+        totalAmount,
+        advanceReceived,
+      );
 
       const quotationNumber = await this.numbering.nextNumber(tx, DocumentType.QUOTATION);
       const quotation = await tx.quotation.create({
@@ -169,10 +205,14 @@ export class QuotationsService {
     const totalAmount = subtotal - discountAmount;
     const advanceReceived = dto.advanceReceived ?? 0;
     if (totalAmount < 0) throw new BadRequestException('Discount cannot exceed the subtotal');
-    if (advanceReceived > totalAmount) throw new BadRequestException('Advance received cannot exceed the total amount');
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
+      this.validateReceivedAmount(
+        customer.currentBalance,
+        totalAmount,
+        advanceReceived,
+      );
       await tx.quotationItem.deleteMany({ where: { quotationId: id } });
 
       const updated = await tx.quotation.update({

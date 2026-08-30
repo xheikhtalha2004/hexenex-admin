@@ -28,4 +28,9 @@ export class ListBalancesQueryDto {
   @Transform(toBoolean)
   @IsBoolean()
   lowStockOnly?: boolean;
+
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  negativeStockOnly?: boolean;
 }

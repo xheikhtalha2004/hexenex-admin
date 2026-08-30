@@ -5,9 +5,9 @@ import {
   formatDate,
   formatMoney,
   customTableHtml,
-  TableColumn,
   Money,
-  totalsHtml,
+  splitSummaryHtml,
+  UNIFIED_INVOICE_STYLES,
 } from './document-shell';
 
 interface SalesInvoiceItemForTemplate {
@@ -35,6 +35,8 @@ interface SalesInvoiceForTemplate {
   discountAmount: Money;
   totalAmount: Money;
   advanceReceived?: Money;
+  previousBalance: Money;
+  preparedByName: string;
   customer: { name: string };
   location: { name: string };
   items: SalesInvoiceItemForTemplate[];
@@ -45,13 +47,13 @@ export function salesInvoiceHtml(
   company: CompanySettingsForTemplate,
 ): string {
   const columns = [
-    { header: 'Quantity', align: 'right' as const },
-    { header: 'Product' },
-    { header: 'Width', align: 'right' as const },
-    { header: 'Length', align: 'right' as const },
-    { header: 'Rate', align: 'right' as const },
-    { header: 'Total Square Feet', align: 'right' as const },
-    { header: 'Amount or Price', align: 'right' as const },
+    { header: 'Qty', align: 'center' as const },
+    { header: 'Product', align: 'center' as const },
+    { header: 'Width', align: 'center' as const },
+    { header: 'Length', align: 'center' as const },
+    { header: 'Sq Ft', align: 'center' as const },
+    { header: 'Rate', align: 'center' as const },
+    { header: 'Amount', align: 'center' as const },
   ];
 
   const rows = invoice.items.map((item) => {
@@ -81,17 +83,21 @@ export function salesInvoiceHtml(
       esc(item.product.name),
       w,
       l,
-      formatMoney(item.rate),
       formatMoney(item.quantity),
+      formatMoney(item.rate),
       formatMoney(item.amount),
     ];
   });
 
-  const advanceReceived = Number(invoice.advanceReceived ?? 0);
-  const remainingAmount = Math.max(
+  const totalSquareFeet = invoice.items.reduce(
+    (sum, item) => sum + Number(item.quantity),
     0,
-    Number(invoice.totalAmount) - advanceReceived,
   );
+  const grossTotal = Number(invoice.totalAmount);
+  const previousBalance = Math.max(0, Number(invoice.previousBalance ?? 0));
+  const totalAmount = previousBalance + grossTotal;
+  const received = Number(invoice.advanceReceived ?? 0);
+  const balance = Math.max(0, totalAmount - received);
 
   const notes = [
     invoice.termsText ? { heading: 'Terms', value: invoice.termsText } : null,
@@ -106,11 +112,14 @@ export function salesInvoiceHtml(
   const bodyHtml = `
     <div class="section-label">Items</div>
     ${customTableHtml(columns, rows)}
-    ${totalsHtml([
-      { label: 'Subtotal', value: invoice.subtotal, emphasis: 'muted' },
-      { label: 'Total Amount', value: invoice.totalAmount },
-      { label: 'Advance Received', value: advanceReceived, emphasis: 'muted' },
-      { label: 'Remaining Amount', value: remainingAmount, emphasis: 'grand' },
+    ${splitSummaryHtml('T. Sq. Ft.', totalSquareFeet, [
+      { label: 'Gross Total', value: grossTotal, emphasis: 'muted' },
+      { label: 'Previous Balance', value: previousBalance, emphasis: 'muted' },
+      { label: 'Total Amount', value: totalAmount },
+      { label: 'Received', value: received, emphasis: 'muted' },
+      ...(balance > 0
+        ? [{ label: 'Balance', value: balance, emphasis: 'grand' as const }]
+        : []),
     ])}
     ${
       notes.length
@@ -123,13 +132,11 @@ export function salesInvoiceHtml(
     company,
     title: 'Sales Invoice',
     documentNumber: invoice.invoiceNumber,
-    meta: [
-      { label: 'Date', value: formatDate(invoice.invoiceDate) },
-      { label: 'Customer', value: invoice.customer.name },
-      { label: 'Location', value: invoice.location.name },
-    ],
+    titleMeta: [{ label: 'Date', value: formatDate(invoice.invoiceDate) }],
+    meta: [{ label: 'Customer', value: invoice.customer.name }],
     bodyHtml,
-    signOff: ['Prepared By', 'Received By'],
+    footerLeft: `Prepared by: ${invoice.preparedByName}`,
+    extraStyles: UNIFIED_INVOICE_STYLES,
   });
 }
 
@@ -144,8 +151,8 @@ export function deliveryOrderHtml(
     { header: 'Product & Description' },
     { header: 'Size' },
     { header: 'Qty', align: 'right' as const },
-    { header: 'W (in)', align: 'right' as const },
-    { header: 'L (in)', align: 'right' as const },
+    { header: 'Width', align: 'right' as const },
+    { header: 'Length', align: 'right' as const },
     { header: 'Sq Ft', align: 'right' as const },
   ];
 
@@ -184,7 +191,7 @@ export function deliveryOrderHtml(
           : sizeOption === 'SELF'
             ? 'Self (entered sqft directly)'
             : sizeOption
-              ? sizeOption + ' in (standard)'
+              ? sizeOption + ' (standard)'
               : '—',
       ),
       qty,
@@ -203,8 +210,8 @@ export function deliveryOrderHtml(
     company,
     title: 'Delivery Order',
     documentNumber: invoice.invoiceNumber,
+    titleMeta: [{ label: 'Date', value: formatDate(invoice.invoiceDate) }],
     meta: [
-      { label: 'Date', value: formatDate(invoice.invoiceDate) },
       { label: 'Customer', value: invoice.customer.name },
       { label: 'Dispatch Location', value: invoice.location.name },
       ...(invoice.deliveryAddress
@@ -213,5 +220,6 @@ export function deliveryOrderHtml(
     ],
     bodyHtml,
     signOff: ['Dispatched By', 'Received By (Customer)'],
+    footerLeft: `Prepared by: ${invoice.preparedByName}`,
   });
 }

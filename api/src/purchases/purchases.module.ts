@@ -8,6 +8,7 @@ import { CostingModule } from '../costing/costing.module';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
 import { SupplierLedgerModule } from '../supplier-ledger/supplier-ledger.module';
 import { PdfModule } from '../pdf/pdf.module';
+import { QuotationEngineModule } from '../quotation-engine/quotation-engine.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PdfModule } from '../pdf/pdf.module';
     CompanySettingsModule,
     SupplierLedgerModule,
     PdfModule,
+    QuotationEngineModule,
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],

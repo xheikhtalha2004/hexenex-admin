@@ -559,17 +559,17 @@ model SalesInvoice {
 }
 
 model SalesInvoiceItem {
-  id             String            @id @default(cuid())
-  salesInvoiceId String
-  productId      String
+  id              String            @id @default(cuid())
+  salesInvoiceId  String
+  productId       String
   inputParameters Json?
-  quantity       Decimal           @db.Decimal(14, 2)
-  rate           Decimal           @db.Decimal(14, 2)
-  amount         Decimal           @db.Decimal(14, 2)
-  sortOrder      Int               @default(0)
-  salesInvoice   SalesInvoice      @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
-  product        Product           @relation(fields: [productId], references: [id])
-  returnItems    SalesReturnItem[]
+  quantity        Decimal           @db.Decimal(14, 2)
+  rate            Decimal           @db.Decimal(14, 2)
+  amount          Decimal           @db.Decimal(14, 2)
+  sortOrder       Int               @default(0)
+  salesInvoice    SalesInvoice      @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  product         Product           @relation(fields: [productId], references: [id])
+  returnItems     SalesReturnItem[]
 }
 
 model SalesReturn {
@@ -639,6 +639,7 @@ model PurchaseInvoiceItem {
   id                 String          @id @default(cuid())
   purchaseInvoiceId  String
   productId          String
+  inputParameters    Json?
   quantity           Decimal         @db.Decimal(14, 2)
   unitCost           Decimal         @db.Decimal(14, 4)
   amount             Decimal         @db.Decimal(14, 2)
@@ -935,7 +936,9 @@ model CompanySettings {
   addressLine1             String?
   addressLine2             String?
   phone                    String?
+  phone2                   String?
   email                    String?
+  website                  String?
   logoUrl                  String?
   letterheadHtml           String?
   invoiceTermsDefaultText  String?

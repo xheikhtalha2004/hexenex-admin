@@ -28,6 +28,14 @@ interface Product {
   id: string;
   name: string;
 }
+interface PurchaseItemInputParameters {
+  sizeOption: string;
+  quantity: number | null;
+  width: number | null;
+  length: number | null;
+  sqft: number | null;
+  rate: number;
+}
 interface PurchaseItem {
   id: string;
   quantity: string;
@@ -35,6 +43,7 @@ interface PurchaseItem {
   amount: string;
   landedUnitCost: string;
   product: { name: string };
+  inputParameters?: PurchaseItemInputParameters | null;
 }
 interface PurchaseInvoice {
   id: string;
@@ -59,9 +68,26 @@ interface Paginated<T> {
 interface DraftItemRow {
   key: number;
   productId: string;
+  sizeOption: string;
   quantity: string;
+  width: string;
+  length: string;
+  sqft: string;
   unitCost: string;
 }
+
+const SIZE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'FIX', label: 'Fix (custom width)' },
+  { value: '6', label: '6 (standard)' },
+  { value: '8', label: '8 (standard)' },
+  { value: '12', label: '12 (standard)' },
+  { value: '18', label: '18 (standard)' },
+  { value: '24', label: '24 (standard)' },
+  { value: '36', label: '36 (standard)' },
+  { value: '48', label: '48 (standard)' },
+  { value: '52', label: '52 (standard)' },
+  { value: 'SELF', label: 'Self (enter sq ft directly)' },
+];
 
 export default function PurchasesPage() {
   return (
@@ -72,9 +98,55 @@ export default function PurchasesPage() {
 }
 
 let rowKeySeq = 0;
-function newRow(): DraftItemRow {
+function newRow(productId = ''): DraftItemRow {
   rowKeySeq += 1;
-  return { key: rowKeySeq, productId: '', quantity: '', unitCost: '' };
+  return {
+    key: rowKeySeq,
+    productId,
+    sizeOption: 'FIX',
+    quantity: '',
+    width: '',
+    length: '',
+    sqft: '',
+    unitCost: '',
+  };
+}
+
+function formatAmount(value: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function isRowComplete(row: DraftItemRow): boolean {
+  return Boolean(row.productId && previewSqft(row) !== null && Number(row.unitCost) > 0);
+}
+
+function previewSqft(row: DraftItemRow): number | null {
+  if (row.sizeOption === 'SELF') {
+    const sqft = Number(row.sqft);
+    return Number.isFinite(sqft) && sqft > 0 ? sqft : null;
+  }
+
+  const pieceQuantity = Number(row.quantity);
+  const length = Number(row.length);
+  const width = row.sizeOption === 'FIX' ? Number(row.width) : Number(row.sizeOption);
+  if (
+    !Number.isFinite(pieceQuantity) ||
+    pieceQuantity <= 0 ||
+    !Number.isFinite(width) ||
+    width <= 0 ||
+    !Number.isFinite(length) ||
+    length <= 0
+  ) {
+    return null;
+  }
+  return Math.round(((pieceQuantity * width * length) / 144) * 100) / 100;
+}
+
+function previewAmount(row: DraftItemRow): number | null {
+  const sqft = previewSqft(row);
+  const unitCost = Number(row.unitCost);
+  if (sqft === null || !Number.isFinite(unitCost) || unitCost <= 0) return null;
+  return Math.round(sqft * unitCost * 100) / 100;
 }
 
 function PurchasesContent() {
@@ -102,8 +174,24 @@ function PurchasesContent() {
   const [items, setItems] = useState<DraftItemRow[]>([newRow()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const defaultFactoryLocation = locationsQuery.data?.find((location) => location.name.toLowerCase().includes('factory'));
+  const effectiveLocationId = locationId || defaultFactoryLocation?.id || '';
+
   function updateItem(key: number, patch: Partial<DraftItemRow>) {
-    setItems((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setItems((rows) => {
+      const next = rows.map((row) => (row.key === key ? { ...row, ...patch } : row));
+      const editedIndex = next.findIndex((row) => row.key === key);
+      const editedRow = next[editedIndex];
+      const editedLastRow = editedIndex === next.length - 1;
+      if (
+        editedLastRow &&
+        editedRow.productId &&
+        (patch.productId !== undefined || isRowComplete(editedRow))
+      ) {
+        return [...next, newRow(editedRow.productId)];
+      }
+      return next;
+    });
   }
   function removeItem(key: number) {
     setItems((rows) => (rows.length > 1 ? rows.filter((r) => r.key !== key) : rows));
@@ -130,24 +218,32 @@ function PurchasesContent() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!supplierId || !locationId) {
+    if (!supplierId || !effectiveLocationId) {
       toast.error('Select a supplier and a location');
       return;
     }
-    const validItems = items.filter((r) => r.productId && r.quantity && r.unitCost);
+    const validItems = items.filter(isRowComplete);
     if (validItems.length === 0) {
-      toast.error('Add at least one item');
+      toast.error('Add at least one complete item (product, dimensions, and rate)');
       return;
     }
     setIsSubmitting(true);
     try {
       await apiClient.post('/purchases', {
         supplierId,
-        locationId,
+        locationId: effectiveLocationId,
         freightCost: Number(freightCost) || 0,
         otherDirectCosts: Number(otherDirectCosts) || 0,
         freightAllocationMethod,
-        items: validItems.map((r) => ({ productId: r.productId, quantity: Number(r.quantity), unitCost: Number(r.unitCost) })),
+        items: validItems.map((r) => ({
+          productId: r.productId,
+          sizeOption: r.sizeOption || 'FIX',
+          quantity: r.quantity ? Number(r.quantity) : undefined,
+          width: r.width ? Number(r.width) : undefined,
+          length: r.length ? Number(r.length) : undefined,
+          sqft: r.sqft ? Number(r.sqft) : undefined,
+          unitCost: Number(r.unitCost),
+        })),
       });
       toast.success('Purchase invoice created as draft');
       resetForm();
@@ -158,6 +254,12 @@ function PurchasesContent() {
       setIsSubmitting(false);
     }
   }
+
+  const purchaseSquareFeet = items.reduce((sum, row) => sum + (previewSqft(row) ?? 0), 0);
+  const purchaseSubtotal = items.reduce((sum, row) => sum + (previewAmount(row) ?? 0), 0);
+  const purchaseFreight = Math.max(0, Number(freightCost) || 0);
+  const purchaseOtherCosts = Math.max(0, Number(otherDirectCosts) || 0);
+  const purchaseLandedTotal = purchaseSubtotal + purchaseFreight + purchaseOtherCosts;
 
   return (
     <div className="flex flex-col gap-6">
@@ -187,24 +289,6 @@ function PurchasesContent() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Receiving location</Label>
-                  <Select
-                    value={locationId}
-                    onValueChange={(v) => setLocationId(v ?? '')}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select location" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locationsQuery.data?.map((l) => (
-                        <SelectItem key={l.id} value={l.id}>
-                          {l.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="freightCost">Freight / inward charges</Label>
                   <Input id="freightCost" type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} />
                 </div>
@@ -218,61 +302,205 @@ function PurchasesContent() {
                     onChange={(e) => setOtherDirectCosts(e.target.value)}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Allocate freight/other costs</Label>
+                  <Select
+                    items={{ BY_VALUE: 'By item value', BY_QUANTITY: 'By item quantity' }}
+                    value={freightAllocationMethod}
+                    onValueChange={(value) => setFreightAllocationMethod((value as 'BY_VALUE' | 'BY_QUANTITY') ?? 'BY_VALUE')}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BY_VALUE">By item value</SelectItem>
+                      <SelectItem value="BY_QUANTITY">By item quantity</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              <div className="space-y-2 max-w-xs">
-                <Label>Allocate freight/other costs</Label>
-                <Select value={freightAllocationMethod} onValueChange={(v) => setFreightAllocationMethod((v as 'BY_VALUE' | 'BY_QUANTITY') ?? 'BY_VALUE')}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="BY_VALUE">By item value</SelectItem>
-                    <SelectItem value="BY_QUANTITY">By item quantity</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <Label>Items</Label>
-                {items.map((row) => (
-                  <div key={row.key} className="grid grid-cols-12 gap-2 items-end">
-                    <div className="col-span-6">
-                      <SearchableSelect
-                        items={(productsQuery.data ?? []).map((p) => ({ value: p.id, label: p.name }))}
-                        value={row.productId}
-                        onValueChange={(v) => updateItem(row.key, { productId: v ?? '' })}
-                        placeholder="Select product"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="Qty (sq ft)"
-                        value={row.quantity}
-                        onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
-                      />
-                    </div>
-                    <div className="col-span-3">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="Unit cost"
-                        value={row.unitCost}
-                        onChange={(e) => updateItem(row.key, { unitCost: e.target.value })}
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <Button type="button" variant="outline" size="sm" onClick={() => removeItem(row.key)} disabled={items.length <= 1}>
-                        ✕
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                <Button type="button" variant="outline" size="sm" onClick={() => setItems((rows) => [...rows, newRow()])}>
-                  Add item
-                </Button>
+                <div className="overflow-x-auto rounded-lg border border-border/70">
+                  <table className="w-full min-w-[1180px] text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40 text-xs text-muted-foreground divide-x divide-border/50">
+                        <th className="w-[7%] px-2 py-1.5 text-left font-medium">Quantity</th>
+                        <th className="w-[18%] px-2 py-1.5 text-left font-medium">Product</th>
+                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Location</th>
+                        <th className="w-[13%] px-2 py-1.5 text-left font-medium">Size Formula</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Width</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Length</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Rate</th>
+                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Total Square Feet</th>
+                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount or Price</th>
+                        <th className="w-8" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {items.map((row, index) => {
+                        const squareFeet = previewSqft(row);
+                        const amount = previewAmount(row);
+                        const isLastBlankRow = index === items.length - 1 && !row.productId;
+                        return (
+                          <tr key={row.key} className="divide-x divide-border/50">
+                            <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
+                                <Input
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  value={row.quantity}
+                                  onChange={(event) => updateItem(row.key, { quantity: event.target.value })}
+                                />
+                              )}
+                            </td>
+                            <td className="p-0 align-top">
+                              <SearchableSelect
+                                items={(productsQuery.data ?? []).map((product) => ({ value: product.id, label: product.name }))}
+                                value={row.productId}
+                                onValueChange={(value) => updateItem(row.key, { productId: value ?? '' })}
+                                placeholder="Select product"
+                                openOnFocus
+                                triggerClassName="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset"
+                              />
+                            </td>
+                            <td className="p-0 align-top">
+                              <Select
+                                items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
+                                value={effectiveLocationId}
+                                onValueChange={(value) => setLocationId(value ?? defaultFactoryLocation?.id ?? '')}
+                              >
+                                <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset">
+                                  <SelectValue placeholder="Select location" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(locationsQuery.data ?? []).map((location) => (
+                                    <SelectItem key={location.id} value={location.id}>{location.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="p-0 align-top">
+                              <Select
+                                items={Object.fromEntries(SIZE_OPTIONS.map((option) => [option.value, option.label]))}
+                                value={row.sizeOption}
+                                onValueChange={(value) => updateItem(row.key, { sizeOption: value ?? 'FIX' })}
+                              >
+                                <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {SIZE_OPTIONS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
+                                <Input
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={row.width}
+                                  placeholder={row.sizeOption !== 'FIX' ? row.sizeOption : undefined}
+                                  onChange={(event) => updateItem(row.key, { width: event.target.value })}
+                                />
+                              )}
+                            </td>
+                            <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
+                                <Input
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={row.length}
+                                  onChange={(event) => updateItem(row.key, { length: event.target.value })}
+                                />
+                              )}
+                            </td>
+                            <td className="p-0 align-top">
+                              <Input
+                                className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={row.unitCost}
+                                onChange={(event) => updateItem(row.key, { unitCost: event.target.value })}
+                              />
+                            </td>
+                            <td className="p-0 text-right align-top font-mono">
+                              {row.sizeOption === 'SELF' ? (
+                                <Input
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-right font-mono text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="Sq ft"
+                                  value={row.sqft}
+                                  onChange={(event) => updateItem(row.key, { sqft: event.target.value })}
+                                />
+                              ) : (
+                                <div className="px-2 py-1.5">{squareFeet !== null ? formatAmount(squareFeet) : '—'}</div>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-right align-top font-mono">
+                              {amount !== null ? formatAmount(amount) : '—'}
+                            </td>
+                            <td className="p-0 align-top">
+                              {!isLastBlankRow && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => removeItem(row.key)}
+                                  disabled={items.length <= 1}
+                                >
+                                  ✕
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="ml-auto w-full max-w-sm rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+                <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>T. Sq. Ft.</span>
+                  <span className="font-mono text-foreground">{formatAmount(purchaseSquareFeet)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Gross Total</span>
+                  <span className="font-mono text-foreground">{formatAmount(purchaseSubtotal)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Freight / Inward Charges</span>
+                  <span className="font-mono text-foreground">{formatAmount(purchaseFreight)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Other Direct Costs</span>
+                  <span className="font-mono text-foreground">{formatAmount(purchaseOtherCosts)}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-4 border-t border-border/70 pt-2 text-base font-semibold">
+                  <span>Total Amount</span>
+                  <span className="font-mono">{formatAmount(purchaseLandedTotal)}</span>
+                </div>
               </div>
 
               <Button type="submit" disabled={isSubmitting}>
@@ -347,23 +575,41 @@ function PurchasesContent() {
                                 <Table>
                                   <TableHeader>
                                     <TableRow>
-                                      <TableHead>Product</TableHead>
                                       <TableHead className="text-right">Qty</TableHead>
-                                      <TableHead className="text-right">Unit cost</TableHead>
-                                      <TableHead className="text-right">Landed cost</TableHead>
+                                      <TableHead>Product</TableHead>
+                                      <TableHead>Location</TableHead>
+                                      <TableHead>Size</TableHead>
+                                      <TableHead className="text-right">Width</TableHead>
+                                      <TableHead className="text-right">Length</TableHead>
+                                      <TableHead className="text-right">Sq Ft</TableHead>
+                                      <TableHead className="text-right">Rate</TableHead>
+                                      <TableHead className="text-right">Landed rate</TableHead>
                                       <TableHead className="text-right">Amount</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {inv.items.map((item) => (
-                                      <TableRow key={item.id}>
-                                        <TableCell>{item.product.name}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.quantity}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.unitCost}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.landedUnitCost}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.amount}</TableCell>
-                                      </TableRow>
-                                    ))}
+                                    {inv.items.map((item) => {
+                                      const parameters = item.inputParameters;
+                                      const sizeOption = parameters?.sizeOption ?? '—';
+                                      const isSelf = sizeOption === 'SELF';
+                                      const width = isSelf
+                                        ? '—'
+                                        : parameters?.width ?? (sizeOption !== 'FIX' && sizeOption !== '—' ? sizeOption : '—');
+                                      return (
+                                        <TableRow key={item.id}>
+                                          <TableCell className="text-right font-mono">{isSelf ? '—' : parameters?.quantity ?? '—'}</TableCell>
+                                          <TableCell>{item.product.name}</TableCell>
+                                          <TableCell>{inv.location.name}</TableCell>
+                                          <TableCell>{sizeOption}</TableCell>
+                                          <TableCell className="text-right font-mono">{width}</TableCell>
+                                          <TableCell className="text-right font-mono">{isSelf ? '—' : parameters?.length ?? '—'}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.quantity}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.unitCost}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.landedUnitCost}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.amount}</TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
                                   </TableBody>
                                 </Table>
                               </div>

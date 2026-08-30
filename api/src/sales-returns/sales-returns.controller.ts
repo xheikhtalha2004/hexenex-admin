@@ -35,7 +35,7 @@ export class SalesReturnsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const [salesReturn, company] = await Promise.all([
-      this.salesReturns.findOrThrow(id),
+      this.salesReturns.findForPdf(id),
       this.companySettings.get(),
     ]);
     const buffer = await this.pdf.renderHtmlToPdf(

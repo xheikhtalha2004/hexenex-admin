@@ -2,9 +2,6 @@ import { Type } from 'class-transformer';
 import { IsDate, IsOptional, IsString } from 'class-validator';
 
 export class CreateFromQuotationDto {
-  @IsString()
-  locationId!: string;
-
   @IsOptional()
   @IsString()
   termsText?: string;

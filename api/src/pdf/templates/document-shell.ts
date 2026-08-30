@@ -8,7 +8,9 @@ export interface CompanySettingsForTemplate {
   addressLine1?: string | null;
   addressLine2?: string | null;
   phone?: string | null;
+  phone2?: string | null;
   email?: string | null;
+  website?: string | null;
   logoUrl?: string | null;
 }
 
@@ -43,7 +45,6 @@ export function formatDate(value: string | Date): string {
   });
 }
 
-
 export interface TotalsRow {
   label: string;
   value: Money;
@@ -59,19 +60,67 @@ export function totalsHtml(rows: TotalsRow[]): string {
     .join('')}</div>`;
 }
 
+/** Shared split summary used by quotations, sales invoices, and purchase invoices. */
+export function splitSummaryHtml(
+  leftLabel: string,
+  leftValue: Money,
+  rows: TotalsRow[],
+): string {
+  return `<div class="document-summary">
+    <div class="summary-measure"><span>${esc(leftLabel)}</span><span>${formatMoney(leftValue)}</span></div>
+    ${totalsHtml(rows)}
+  </div>`;
+}
+
+/** Keeps the quotation, sales invoice, and purchase invoice visually identical. */
+export const UNIFIED_INVOICE_STYLES = `
+  .letterhead { border-bottom: none; margin-bottom: 12px; padding-bottom: 0; }
+  .meta-grid { grid-template-columns: 1fr; margin-bottom: 18px; }
+  table.classic-table { margin-bottom: 0; }
+  .document-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-top: 14px; }
+  .document-summary .summary-measure { display: flex; justify-content: space-between; width: 145px; padding: 5px 0; font-size: 11.5px; font-weight: 700; color: #000; }
+  .document-summary .totals { margin-top: 0; }
+  body,
+  .letterhead .company-details,
+  .letterhead .doc-title .doc-number,
+  .letterhead .doc-title-meta .label,
+  .letterhead .doc-title-meta .value,
+  .meta-grid .meta-item .label,
+  .meta-grid .meta-item .value,
+  .section-label,
+  table.classic-table td,
+  .totals .row,
+  .totals .row.muted,
+  .notes,
+  .notes .heading,
+  .footer { color: #000 !important; }
+  table.classic-table th { color: #fff !important; }
+`;
+
 export interface TableColumn {
   header: string;
   align?: 'left' | 'right' | 'center';
 }
 
-export function customTableHtml(columns: TableColumn[], rows: string[][]): string {
-  const alignClass = (align?: string) => align === 'right' ? ' class="num"' : align === 'center' ? ' style="text-align:center"' : '';
-  
-  const thead = `<tr>${columns.map(c => `<th${alignClass(c.align)}>${esc(c.header)}</th>`).join('')}</tr>`;
-  
-  const tbody = rows.map(row => 
-    `<tr>${row.map((cell, i) => `<td${alignClass(columns[i]?.align)}>${cell}</td>`).join('')}</tr>`
-  ).join('');
+export function customTableHtml(
+  columns: TableColumn[],
+  rows: string[][],
+): string {
+  const alignClass = (align?: string) =>
+    align === 'right'
+      ? ' class="num"'
+      : align === 'center'
+        ? ' style="text-align:center"'
+        : '';
+
+  const thead = `<tr>${columns.map((c) => `<th${alignClass(c.align)}>${esc(c.header)}</th>`).join('')}</tr>`;
+
+  const tbody = rows
+    .map(
+      (row) =>
+        `<tr>${row.map((cell, i) => `<td${alignClass(columns[i]?.align)}>${cell}</td>`).join('')}</tr>`,
+    )
+    .join('');
 
   return `
     <table class="classic-table">
@@ -84,15 +133,19 @@ export function customTableHtml(columns: TableColumn[], rows: string[][]): strin
 const BASE_STYLES = `
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', Arial, sans-serif; color: #1c1c1c; margin: 0; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .page { padding: 10mm 12mm; }
-  .letterhead { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1c1c1c; padding-bottom: 14px; margin-bottom: 18px; }
-  .letterhead .company { display: flex; gap: 12px; align-items: center; }
-  .letterhead .company img { max-height: 48px; max-width: 140px; }
+  .page { min-height: 277mm; padding: 10mm 12mm; display: flex; flex-direction: column; }
+  .letterhead { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: none; padding-bottom: 0; margin-bottom: 12px; }
+  .letterhead .company { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .letterhead .company img { display: block; max-height: 58px; max-width: 160px; object-fit: contain; }
   .letterhead .company-name { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
-  .letterhead .company-details { font-size: 11px; color: #666; line-height: 1.5; margin-top: 2px; }
+  .letterhead .company-details { font-size: 11px; color: #000; line-height: 1.5; margin-top: 2px; }
   .letterhead .doc-title { text-align: right; }
   .letterhead .doc-title h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: 0.06em; font-weight: 700; }
-  .letterhead .doc-title .doc-number { font-size: 13px; font-weight: 600; color: #333; }
+  .letterhead .doc-title .doc-number { font-size: 13px; font-weight: 600; color: #000; }
+  .letterhead .doc-title-meta { margin-top: 10px; display: grid; gap: 5px; min-width: 170px; }
+  .letterhead .doc-title-meta .item { display: flex; justify-content: space-between; gap: 16px; font-size: 10px; }
+  .letterhead .doc-title-meta .label { color: #000; text-transform: uppercase; letter-spacing: 0.04em; }
+  .letterhead .doc-title-meta .value { color: #000; font-weight: 600; }
 
   .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 24px; margin-bottom: 22px; font-size: 11.5px; }
   .meta-grid .meta-item .label { color: #888; text-transform: uppercase; font-size: 9px; letter-spacing: 0.05em; margin-bottom: 2px; }
@@ -116,7 +169,7 @@ const BASE_STYLES = `
   .sign-off { margin-top: 46px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
   .sign-off .box { border-top: 1px solid #999; padding-top: 6px; font-size: 10.5px; color: #666; text-align: center; }
 
-  .footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid #eee; display: flex; justify-content: space-between; font-size: 9.5px; color: #999; }
+  .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #eee; display: flex; justify-content: space-between; font-size: 9.5px; color: #000; }
 
   table.plain { width: 100%; border-collapse: collapse; }
   table.plain th { background: #f6f6f6; text-align: left; padding: 7px 9px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: #666; border-bottom: 1px solid #ddd; }
@@ -124,7 +177,7 @@ const BASE_STYLES = `
   table.plain td.num, table.plain th.num { text-align: right; font-family: 'Consolas', monospace; }
 
   table.classic-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10.5px; }
-  table.classic-table th { background: #008f8f; color: #fff; text-align: left; padding: 6px 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; border: 1px solid #007a7a; }
+  table.classic-table th { background: #111827; color: #fff; text-align: left; padding: 6px 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; border: 1px solid #111827; }
   table.classic-table td { padding: 6px 8px; border: 1px solid #ccc; }
   table.classic-table td.num, table.classic-table th.num { text-align: right; font-family: 'Consolas', monospace; }
 
@@ -137,20 +190,25 @@ export function documentShell(params: {
   company: CompanySettingsForTemplate;
   title: string;
   documentNumber: string;
+  titleMeta?: MetaRow[];
   meta: MetaRow[];
   bodyHtml: string;
   extraStyles?: string;
   signOff?: string[];
+  footerLeft?: string;
 }): string {
   const {
     company,
     title,
     documentNumber,
+    titleMeta,
     meta,
     bodyHtml,
     extraStyles,
     signOff,
+    footerLeft,
   } = params;
+  const footerText = footerLeft?.trim() || 'Prepared by: System';
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -161,30 +219,45 @@ export function documentShell(params: {
   <div class="page">
     <div class="letterhead">
       <div class="company">
-        ${company.logoUrl ? `<img src="${esc(company.logoUrl)}" />` : ''}
+        ${company.logoUrl ? `<img src="${esc(company.logoUrl)}" alt="" onerror="this.style.display='none'" />` : ''}
         <div>
           <div class="company-name">${esc(company.companyName)}</div>
           <div class="company-details">
             ${company.addressLine1 ? esc(company.addressLine1) + '<br/>' : ''}
             ${company.addressLine2 ? esc(company.addressLine2) + '<br/>' : ''}
-            ${[company.phone, company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ')}
+            ${[company.phone, company.phone2, company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ')}
+            ${company.website ? `<br/>${esc(company.website)}` : ''}
           </div>
         </div>
       </div>
       <div class="doc-title">
         <h1>${esc(title)}</h1>
         <div class="doc-number">${esc(documentNumber)}</div>
+        ${
+          titleMeta?.length
+            ? `<div class="doc-title-meta">${titleMeta
+                .map(
+                  (m) =>
+                    `<div class="item"><span class="label">${esc(m.label)}</span><span class="value">${esc(m.value)}</span></div>`,
+                )
+                .join('')}</div>`
+            : ''
+        }
       </div>
     </div>
 
-    <div class="meta-grid">
+    ${
+      meta.length
+        ? `<div class="meta-grid">
       ${meta
         .map(
           (m) =>
             `<div class="meta-item"><div class="label">${esc(m.label)}</div><div class="value">${esc(m.value)}</div></div>`,
         )
         .join('')}
-    </div>
+    </div>`
+        : ''
+    }
 
     ${bodyHtml}
 
@@ -195,7 +268,7 @@ export function documentShell(params: {
     }
 
     <div class="footer">
-      <span>Generated ${esc(new Date().toLocaleString())}</span>
+      <span>${esc(footerText)}</span>
       <span>${esc(company.companyName)}</span>
     </div>
   </div>

@@ -54,9 +54,9 @@ export function statementHtml(
     company,
     title: params.title,
     documentNumber: params.documentNumber,
+    titleMeta: [{ label: 'Generated', value: formatDate(new Date()) }],
     meta: [
       { label: 'Party', value: params.partyName },
-      { label: 'Generated', value: formatDate(new Date()) },
       { label: 'Entries', value: String(params.entries.length) },
     ],
     bodyHtml,

@@ -79,6 +79,19 @@ export class SalesReturnsService {
     return salesReturn;
   }
 
+  async findForPdf(id: string) {
+    const salesReturn = await this.findOrThrow(id);
+    const creator = await this.prisma.user.findUnique({
+      where: { id: salesReturn.createdByUserId },
+      select: { fullName: true, email: true },
+    });
+
+    return {
+      ...salesReturn,
+      preparedByName: creator?.fullName || creator?.email || 'Unknown User',
+    };
+  }
+
   async create(dto: CreateSalesReturnDto, actorId: string) {
     const strategy = await this.costingRegistry.resolve();
 
@@ -130,12 +143,19 @@ export class SalesReturnsService {
         );
         if (quantity.greaterThan(remaining)) {
           throw new BadRequestException(
-            `Cannot return ${quantity} of ${invoiceItem.productId} — only ${remaining} remain returnable on this invoice line`,
+            `Cannot return ${quantity.toString()} of ${invoiceItem.productId} — only ${remaining.toString()} remain returnable on this invoice line`,
           );
         }
 
         const amount = quantity.times(invoiceItem.rate);
         totalAmount = totalAmount.plus(amount);
+
+        const recordedWidth =
+          returnItem.sizeOption &&
+          returnItem.sizeOption !== 'FIX' &&
+          returnItem.sizeOption !== 'SELF'
+            ? Number(returnItem.sizeOption)
+            : returnItem.width;
 
         const createdReturnItem = await tx.salesReturnItem.create({
           data: {
@@ -145,7 +165,7 @@ export class SalesReturnsService {
             description: returnItem.description,
             sizeOption: returnItem.sizeOption,
             pieces: returnItem.pieces,
-            width: returnItem.width,
+            width: recordedWidth,
             length: returnItem.length,
             usableWidth: returnItem.usableWidth,
             usableLength: returnItem.usableLength,

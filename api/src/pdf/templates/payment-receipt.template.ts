@@ -58,7 +58,8 @@ export function paymentReceiptHtml(
     company,
     title: params.title,
     documentNumber: params.documentNumber,
-    meta: [{ label: 'Date', value: formatDate(params.paymentDate) }],
+    titleMeta: [{ label: 'Date', value: formatDate(params.paymentDate) }],
+    meta: [],
     bodyHtml,
   });
 }
@@ -100,7 +101,8 @@ export function settlementReceiptHtml(
     company,
     title: 'Payment',
     documentNumber: params.documentNumber,
-    meta: [{ label: 'Date', value: formatDate(params.settlementDate) }],
+    titleMeta: [{ label: 'Date', value: formatDate(params.settlementDate) }],
+    meta: [],
     bodyHtml,
   });
 }

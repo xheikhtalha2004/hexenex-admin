@@ -5,7 +5,6 @@ import {
   formatDate,
   formatMoney,
   customTableHtml,
-  TableColumn,
   Money,
   totalsHtml,
 } from './document-shell';
@@ -24,13 +23,12 @@ interface SalesReturnItemForTemplate {
   amount: Money;
 }
 
-
-
 interface SalesReturnForTemplate {
   returnNumber: string;
   returnDate: string | Date;
   reason?: string | null;
   totalAmount: Money;
+  preparedByName: string;
   customer: { name: string };
   salesInvoice: { invoiceNumber: string; locationId?: string };
   items: SalesReturnItemForTemplate[];
@@ -41,47 +39,53 @@ export function salesReturnHtml(
   company: CompanySettingsForTemplate,
 ): string {
   const columns = [
-    { header: 'SN', align: 'center' as const },
-    { header: 'Product & Description' },
-    { header: 'Returned Size' },
-    { header: 'Usable (Restocked)' },
-    { header: 'Rate', align: 'right' as const },
-    { header: 'Amount', align: 'right' as const },
+    { header: 'Qty', align: 'center' as const },
+    { header: 'Product', align: 'center' as const },
+    { header: 'Width', align: 'center' as const },
+    { header: 'Length', align: 'center' as const },
+    { header: 'Usable W', align: 'center' as const },
+    { header: 'Usable L', align: 'center' as const },
+    { header: 'Sq Ft', align: 'center' as const },
+    { header: 'Rate', align: 'center' as const },
+    { header: 'Amount', align: 'center' as const },
   ];
 
-  const rows = salesReturn.items.map((item, i) => {
-    const desc = item.description ? `<br/><span style="font-size:8.5px;color:#555;">${esc(item.description)}</span>` : '';
+  const rows = salesReturn.items.map((item) => {
+    const desc = item.description
+      ? `<br/><span style="font-size:8.5px;color:#555;">${esc(item.description)}</span>`
+      : '';
     const name = esc(item.product.name) + desc;
-    
-    let returnedSize = '?';
-    let usableSize = '-';
-    
-    if (item.sizeOption === 'SELF' || (!item.width && !item.length)) {
-      returnedSize = `${formatMoney(item.quantity)} sq ft (direct)`;
-    } else {
-      const p = item.pieces != null ? formatMoney(item.pieces) : '?';
-      const w = item.width != null ? formatMoney(item.width) : '?';
-      const l = item.length != null ? formatMoney(item.length) : '?';
-      returnedSize = `${p} pcs × ${w}in × ${l}in`;
-      
-      const trimmed =
-        item.usableWidth != null &&
-        item.usableLength != null &&
-        (Number(item.usableWidth) !== Number(item.width) ||
-          Number(item.usableLength) !== Number(item.length));
-          
-      if (trimmed) {
-        usableSize = `${formatMoney(item.usableWidth!)}in × ${formatMoney(item.usableLength!)}in<br/><span style="font-size:8.5px;color:#555;">${formatMoney(item.quantity)} sq ft</span>`;
-      } else {
-        usableSize = `${formatMoney(item.quantity)} sq ft`;
-      }
-    }
+    const isSelf = item.sizeOption === 'SELF';
+    const standardWidth =
+      item.sizeOption && item.sizeOption !== 'FIX' && item.sizeOption !== 'SELF'
+        ? item.sizeOption
+        : null;
+    const width = isSelf
+      ? '-'
+      : item.width != null
+        ? formatMoney(item.width)
+        : (standardWidth ?? '-');
+    const length =
+      isSelf || item.length == null ? '-' : formatMoney(item.length);
+    const usableWidth = isSelf
+      ? '-'
+      : item.usableWidth != null
+        ? formatMoney(item.usableWidth)
+        : width;
+    const usableLength = isSelf
+      ? '-'
+      : item.usableLength != null
+        ? formatMoney(item.usableLength)
+        : length;
 
     return [
-      String(i + 1),
+      isSelf || item.pieces == null ? '-' : formatMoney(item.pieces),
       name,
-      returnedSize,
-      usableSize,
+      width,
+      length,
+      usableWidth,
+      usableLength,
+      formatMoney(item.quantity),
       formatMoney(item.rate),
       formatMoney(item.amount),
     ];
@@ -98,8 +102,8 @@ export function salesReturnHtml(
     company,
     title: 'Sales Return',
     documentNumber: salesReturn.returnNumber,
+    titleMeta: [{ label: 'Date', value: formatDate(salesReturn.returnDate) }],
     meta: [
-      { label: 'Date', value: formatDate(salesReturn.returnDate) },
       { label: 'Customer', value: salesReturn.customer.name },
       {
         label: 'Against Invoice',
@@ -108,5 +112,6 @@ export function salesReturnHtml(
     ],
     bodyHtml,
     signOff: ['Returned By', 'Received By (Warehouse)'],
+    footerLeft: `Prepared by: ${salesReturn.preparedByName}`,
   });
 }

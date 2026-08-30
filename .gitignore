@@ -6,3 +6,5 @@ backup/
 api/node_modules/
 web/node_modules/
 api/dist/
+/api/tmp/
+/tmp/

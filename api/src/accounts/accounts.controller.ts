@@ -5,6 +5,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/types/request-user';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { AddCashDto } from './dto/add-cash.dto';
+import { TransferFundsDto } from './dto/transfer-funds.dto';
 
 @Controller('accounts')
 @RequirePermissions('accounts.view')
@@ -47,5 +48,14 @@ export class AccountsController {
   @RequirePermissions('accounts.manage')
   addCash(@Body() dto: AddCashDto, @CurrentUser() actor: RequestUser) {
     return this.accounts.addCash(dto, actor.id);
+  }
+
+  @Post('transfer')
+  @RequirePermissions('accounts.manage')
+  transferFunds(
+    @Body() dto: TransferFundsDto,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.accounts.transferFunds(dto, actor.id);
   }
 }

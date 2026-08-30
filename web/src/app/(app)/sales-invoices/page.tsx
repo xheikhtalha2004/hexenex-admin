@@ -20,6 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 interface Customer {
   id: string;
   name: string;
+  currentBalance: string;
 }
 interface Location {
   id: string;
@@ -68,21 +69,20 @@ interface Paginated<T> {
 
 const SIZE_OPTIONS = [
   { value: 'FIX', label: 'Fix (custom width)' },
-  { value: '6', label: '6 in (standard)' },
-  { value: '8', label: '8 in (standard)' },
-  { value: '12', label: '12 in (standard)' },
-  { value: '18', label: '18 in (standard)' },
-  { value: '24', label: '24 in (standard)' },
-  { value: '36', label: '36 in (standard)' },
-  { value: '48', label: '48 in (standard)' },
-  { value: '52', label: '52 in (standard)' },
+  { value: '6', label: '6 (standard)' },
+  { value: '8', label: '8 (standard)' },
+  { value: '12', label: '12 (standard)' },
+  { value: '18', label: '18 (standard)' },
+  { value: '24', label: '24 (standard)' },
+  { value: '36', label: '36 (standard)' },
+  { value: '48', label: '48 (standard)' },
+  { value: '52', label: '52 (standard)' },
   { value: 'SELF', label: 'Self (enter sq ft directly)' },
 ];
 
 interface DraftItemRow {
   key: number;
   productId: string;
-  description: string;
   sizeOption: string;
   quantity: string;
   width: string;
@@ -92,9 +92,9 @@ interface DraftItemRow {
 }
 
 let rowKeySeq = 0;
-function newRow(): DraftItemRow {
+function newRow(productId = ''): DraftItemRow {
   rowKeySeq += 1;
-  return { key: rowKeySeq, productId: '', description: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
+  return { key: rowKeySeq, productId, sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
 }
 
 function previewSqft(row: DraftItemRow): number | null {
@@ -111,11 +111,27 @@ function previewSqft(row: DraftItemRow): number | null {
   return Math.round(((quantity * width * length) / 144) * 100) / 100;
 }
 
+function isRowComplete(row: DraftItemRow): boolean {
+  if (!row.productId || !row.rate) return false;
+  return previewSqft(row) !== null;
+}
+
+function previewAmount(row: DraftItemRow): number | null {
+  const sqft = previewSqft(row);
+  const rate = Number(row.rate);
+  if (sqft === null || !Number.isFinite(rate) || rate <= 0) return null;
+  return sqft * rate;
+}
+
+function formatAmount(value: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function dimensionSummary(p: ItemInputParameters): string {
   if (!p.sizeOption) return '—';
   if (p.sizeOption === 'SELF') return 'Sq ft entered directly';
   const width = p.width != null ? p.width : (p.sizeOption !== 'FIX' ? p.sizeOption : '?');
-  return `${p.quantity ?? '?'} pc(s) × ${width}in × ${p.length ?? '?'}in`;
+  return `${p.quantity ?? '?'} pc(s) × ${width} × ${p.length ?? '?'}`;
 }
 
 export default function SalesInvoicesPage() {
@@ -162,11 +178,17 @@ function SalesInvoicesContent() {
 
   function updateItem(key: number, patch: Partial<DraftItemRow>) {
     setItems((rows) => {
-      const next = rows.map((r) => (r.key === key ? { ...r, ...patch } : r));
-      // Grid-style entry: as soon as the last row has a product on it, silently append a
-      // fresh blank row underneath so there is never a need to click "Add item" by hand.
-      const last = next[next.length - 1];
-      if (last.productId) return [...next, newRow()];
+      const next = rows.map((row) => (row.key === key ? { ...row, ...patch } : row));
+      const editedIndex = next.findIndex((row) => row.key === key);
+      const editedRow = next[editedIndex];
+      const editedLastRow = editedIndex === next.length - 1;
+      if (
+        editedLastRow &&
+        editedRow.productId &&
+        (patch.productId !== undefined || isRowComplete(editedRow))
+      ) {
+        return [...next, newRow(editedRow.productId)];
+      }
       return next;
     });
   }
@@ -185,13 +207,13 @@ function SalesInvoicesContent() {
     setFormOpen(true);
   }
 
-  const invoiceSubtotal = items.reduce((sum, row) => {
-    const sqft = previewSqft(row);
-    const rate = Number(row.rate);
-    return sum + (sqft !== null && Number.isFinite(rate) ? sqft * rate : 0);
-  }, 0);
+  const invoiceSquareFeet = items.reduce((sum, row) => sum + (previewSqft(row) ?? 0), 0);
+  const invoiceSubtotal = items.reduce((sum, row) => sum + (previewAmount(row) ?? 0), 0);
+  const selectedCustomer = customersQuery.data?.find((customer) => customer.id === customerId);
+  const invoicePreviousBalance = Math.max(0, Number(selectedCustomer?.currentBalance ?? 0));
+  const invoiceTotal = invoicePreviousBalance + invoiceSubtotal;
   const invoiceAdvance = Math.max(0, Number(advanceReceived) || 0);
-  const invoiceRemaining = Math.max(0, invoiceSubtotal - invoiceAdvance);
+  const invoiceRemaining = Math.max(0, invoiceTotal - invoiceAdvance);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -199,13 +221,13 @@ function SalesInvoicesContent() {
       toast.error('Select a customer and a location');
       return;
     }
-    const validItems = items.filter((r) => r.productId && r.quantity && r.rate);
+    const validItems = items.filter(isRowComplete);
     if (validItems.length === 0) {
       toast.error('Add at least one item');
       return;
     }
-    if (invoiceAdvance > invoiceSubtotal) {
-      toast.error('Advance received cannot exceed the invoice total');
+    if (invoiceAdvance > invoiceTotal) {
+      toast.error("Received cannot exceed the customer's total amount");
       return;
     }
     setIsSubmitting(true);
@@ -219,7 +241,6 @@ function SalesInvoicesContent() {
         items: validItems.map((r) => ({
           productId: r.productId,
           inputParameters: {
-            description: r.description || undefined,
             sizeOption: r.sizeOption || 'FIX',
             quantity: r.quantity ? Number(r.quantity) : undefined,
             width: r.width ? Number(r.width) : undefined,
@@ -268,95 +289,118 @@ function SalesInvoicesContent() {
             <DialogTitle>New sales invoice</DialogTitle>
           </DialogHeader>
           <form onSubmit={onSubmit} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-2">
-                  <Label>Customer</Label>
-                  <SearchableSelect
-                    items={(customersQuery.data ?? []).map(c => ({ value: c.id, label: c.name }))}
-                    value={customerId}
-                    onValueChange={(v) => setCustomerId(v ?? '')}
-                    placeholder="Select customer"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Location</Label>
-                  <Select
-                    items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
-                    value={effectiveLocationId || ''}
-                    onValueChange={(v) => setLocationId(v ?? '')}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select location" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locationsQuery.data?.map((l) => (
-                        <SelectItem key={l.id} value={l.id}>
-                          {l.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="advanceReceived">Advance Received</Label>
-                  <Input
-                    id="advanceReceived"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={advanceReceived}
-                    onChange={(e) => setAdvanceReceived(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="termsText">Terms</Label>
-                  <Input id="termsText" value={termsText} onChange={(e) => setTermsText(e.target.value)} placeholder="e.g. Net 30" />
-                </div>
+                <Label>Customer</Label>
+                <SearchableSelect
+                  items={(customersQuery.data ?? []).map((customer) => ({ value: customer.id, label: customer.name }))}
+                  value={customerId}
+                  onValueChange={(value) => setCustomerId(value ?? '')}
+                  placeholder="Select customer"
+                  onTriggerKeyDown={(event) => {
+                    if (event.key === 'Tab' && !event.shiftKey) {
+                      event.preventDefault();
+                      const firstRow = items[0];
+                      const targetId = firstRow.sizeOption === 'SELF'
+                        ? `sales-invoice-product-${firstRow.key}`
+                        : `sales-invoice-quantity-${firstRow.key}`;
+                      document.getElementById(targetId)?.focus();
+                    }
+                  }}
+                />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="advanceReceived">Advance Received</Label>
+                <Input
+                  id="advanceReceived"
+                  type="number"
+                  min="0"
+                  max={invoiceTotal || undefined}
+                  step="0.01"
+                  value={advanceReceived}
+                  onChange={(e) => setAdvanceReceived(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="termsText">Terms</Label>
+                <Input id="termsText" value={termsText} onChange={(e) => setTermsText(e.target.value)} placeholder="e.g. Net 30" />
+              </div>
+            </div>
 
               <div className="space-y-2">
                 <Label>Items</Label>
                 <div className="overflow-x-auto rounded-lg border border-border/70">
-                  <table className="w-full text-sm min-w-[1000px]">
+                  <table className="w-full min-w-[1080px] text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40 text-xs text-muted-foreground divide-x divide-border/50">
-                        <th className="w-[20%] px-2 py-1.5 text-left font-medium">Product</th>
-                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Description</th>
-                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Size</th>
-                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Qty</th>
-                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">W</th>
-                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">L</th>
-                        <th className="w-[9%] px-2 py-1.5 text-left font-medium">Rate</th>
-                        <th className="w-[9%] px-2 py-1.5 text-right font-medium">Result</th>
-                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount</th>
+                        <th className="w-[7%] px-2 py-1.5 text-left font-medium">Quantity</th>
+                        <th className="w-[18%] px-2 py-1.5 text-left font-medium">Product</th>
+                        <th className="w-[12%] px-2 py-1.5 text-left font-medium">Location</th>
+                        <th className="w-[13%] px-2 py-1.5 text-left font-medium">Size Formula</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Width</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Length</th>
+                        <th className="w-[8%] px-2 py-1.5 text-left font-medium">Rate</th>
+                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Total Square Feet</th>
+                        <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount or Price</th>
                         <th className="w-8" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
                       {items.map((row, idx) => {
                         const sqft = previewSqft(row);
-                        const amount = sqft !== null && row.rate ? sqft * Number(row.rate) : null;
+                        const amount = previewAmount(row);
                         const isLastBlankRow = idx === items.length - 1 && !row.productId;
                         return (
                           <tr key={row.key} className="divide-x divide-border/50">
                             <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
+                                <Input
+                                  id={`sales-invoice-quantity-${row.key}`}
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="1"
+                                  value={row.quantity}
+                                  onChange={(event) => updateItem(row.key, { quantity: event.target.value })}
+                                />
+                              )}
+                            </td>
+                            <td className="p-0 align-top">
                               <SearchableSelect
-                                items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
+                                items={(productsQuery.data ?? []).map((product) => ({ value: product.id, label: product.name }))}
                                 value={row.productId}
-                                onValueChange={(val) => {
-                                  updateItem(row.key, { productId: val });
-                                }}
+                                onValueChange={(value) => updateItem(row.key, { productId: value })}
                                 placeholder="Select product"
-                                triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
+                                triggerId={`sales-invoice-product-${row.key}`}
+                                openOnFocus
+                                onTriggerKeyDown={(event) => {
+                                  if (event.key === 'Tab' && !event.shiftKey) {
+                                    event.preventDefault();
+                                    document.getElementById(`sales-invoice-location-${row.key}`)?.focus();
+                                  }
+                                }}
+                                triggerClassName="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset"
                               />
                             </td>
                             <td className="p-0 align-top">
-                              <Input
-                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                placeholder="Optional"
-                                value={row.description}
-                                onChange={(e) => updateItem(row.key, { description: e.target.value })}
-                              />
+                              <Select
+                                items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
+                                value={effectiveLocationId}
+                                onValueChange={(value) => setLocationId(value ?? defaultFactoryLocation?.id ?? '')}
+                              >
+                                <SelectTrigger
+                                  id={`sales-invoice-location-${row.key}`}
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset"
+                                >
+                                  <SelectValue placeholder="Select location" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(locationsQuery.data ?? []).map((location) => (
+                                    <SelectItem key={location.id} value={location.id}>{location.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </td>
                             <td className="p-0 align-top">
                               <Select
@@ -364,7 +408,7 @@ function SalesInvoicesContent() {
                                 value={row.sizeOption}
                                 onValueChange={(v) => updateItem(row.key, { sizeOption: v ?? 'FIX' })}
                               >
-                                <SelectTrigger className="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none">
+                                <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-sm shadow-none focus:ring-1 focus:ring-inset">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -376,74 +420,70 @@ function SalesInvoicesContent() {
                                 </SelectContent>
                               </Select>
                             </td>
-                            {row.sizeOption === 'SELF' ? (
-                              <td className="p-0 align-top" colSpan={3}>
-                                <Input
-                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Sq ft"
-                                  value={row.sqft}
-                                  onChange={(e) => updateItem(row.key, { sqft: e.target.value })}
-                                />
-                              </td>
-                            ) : (
-                              <>
-                                <td className="p-0 align-top">
+                            <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
                                   <Input
-                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                    type="number"
-                                    step="1"
-                                    value={row.quantity}
-                                    onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
-                                  />
-                                </td>
-                                <td className="p-0 align-top">
-                                  <Input
-                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                    className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
                                     type="number"
                                     step="0.01"
                                     value={row.width}
                                     placeholder={row.sizeOption !== 'FIX' ? row.sizeOption : undefined}
-                                    onChange={(e) => updateItem(row.key, { width: e.target.value })}
+                                    onChange={(event) => updateItem(row.key, { width: event.target.value })}
                                   />
-                                </td>
-                                <td className="p-0 align-top">
+                              )}
+                            </td>
+                            <td className="p-0 align-top">
+                              {row.sizeOption === 'SELF' ? (
+                                <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                              ) : (
                                   <Input
-                                  className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                    className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
                                     type="number"
                                     step="0.01"
                                     value={row.length}
-                                    onChange={(e) => updateItem(row.key, { length: e.target.value })}
+                                    onChange={(event) => updateItem(row.key, { length: event.target.value })}
                                   />
-                                </td>
-                              </>
-                            )}
+                              )}
+                            </td>
                             <td className="p-0 align-top">
                               <Input
-                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                className="h-8 rounded-none border-0 bg-transparent px-2 text-sm focus-visible:ring-1 focus-visible:ring-inset"
                                 type="number"
                                 step="0.01"
                                 value={row.rate}
-                                onChange={(e) => updateItem(row.key, { rate: e.target.value })}
+                                onChange={(event) => updateItem(row.key, { rate: event.target.value })}
                               />
                             </td>
-                            <td className="p-2 text-right align-top text-muted-foreground whitespace-nowrap">
-                              {sqft !== null ? `${sqft} sq ft` : '—'}
+                            <td className="p-0 text-right align-top font-mono">
+                              {row.sizeOption === 'SELF' ? (
+                                <Input
+                                  className="h-8 rounded-none border-0 bg-transparent px-2 text-right font-mono text-sm focus-visible:ring-1 focus-visible:ring-inset"
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Sq ft"
+                                  value={row.sqft}
+                                  onChange={(event) => updateItem(row.key, { sqft: event.target.value })}
+                                />
+                              ) : (
+                                <div className="px-2 py-1.5">{sqft !== null ? sqft.toLocaleString() : '—'}</div>
+                              )}
                             </td>
-                            <td className="p-2 text-right align-top font-medium whitespace-nowrap">
-                              {amount !== null ? amount.toFixed(2) : '—'}
+                            <td className="px-2 py-1.5 text-right align-top font-mono whitespace-nowrap">
+                              {amount !== null ? amount.toLocaleString() : '—'}
                             </td>
                             <td className="p-0 align-top">
                               {!isLastBlankRow && (
                                 <Button
                                   type="button"
                                   variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-full rounded-none text-muted-foreground hover:text-destructive"
+                                  size="icon"
+                                  className="h-8 w-8"
                                   onClick={() => removeItem(row.key)}
+                                  disabled={items.length <= 1}
                                 >
-                                  ×
+                                  ✕
                                 </Button>
                               )}
                             </td>
@@ -455,10 +495,31 @@ function SalesInvoicesContent() {
                 </div>
               </div>
 
-              <div className="ml-auto w-full max-w-sm rounded-lg border bg-muted/20 p-4 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Total Amount</span><span className="font-mono">{invoiceSubtotal.toFixed(2)}</span></div>
-                <div className="mt-2 flex justify-between"><span className="text-muted-foreground">Advance Received</span><span className="font-mono">{invoiceAdvance.toFixed(2)}</span></div>
-                <div className="mt-3 flex justify-between border-t pt-3 font-semibold"><span>Remaining Amount</span><span className="font-mono">{invoiceRemaining.toFixed(2)}</span></div>
+              <div className="ml-auto w-full max-w-sm rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+                <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>T. Sq. Ft.</span>
+                  <span className="font-mono text-foreground">{formatAmount(invoiceSquareFeet)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Gross Total</span>
+                  <span className="font-mono text-foreground">{formatAmount(invoiceSubtotal)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Previous Balance</span>
+                  <span className="font-mono text-foreground">{formatAmount(invoicePreviousBalance)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4">
+                  <span>Total Amount</span>
+                  <span className="font-mono">{formatAmount(invoiceTotal)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                  <span>Received</span>
+                  <span className="font-mono text-foreground">{formatAmount(invoiceAdvance)}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-4 border-t border-border/70 pt-2 text-base font-semibold">
+                  <span>Balance</span>
+                  <span className="font-mono">{formatAmount(invoiceRemaining)}</span>
+                </div>
               </div>
 
               <div className="flex gap-2">

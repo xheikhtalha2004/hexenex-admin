@@ -16,7 +16,9 @@ interface CompanySettings {
   addressLine1: string;
   addressLine2: string;
   phone: string;
+  phone2: string;
   email: string;
+  website: string;
   logoUrl: string;
   invoiceTermsDefaultText?: string;
   deliveryTermsDefaultText?: string;
@@ -34,7 +36,9 @@ export default function CompanySettingsPage() {
     addressLine1: '',
     addressLine2: '',
     phone: '',
+    phone2: '',
     email: '',
+    website: '',
     logoUrl: '',
     invoiceTermsDefaultText: '',
     deliveryTermsDefaultText: '',
@@ -42,12 +46,16 @@ export default function CompanySettingsPage() {
 
   useEffect(() => {
     if (settingsQuery.data) {
+      // The query response is the external source that initializes this editable draft.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFormData({
         companyName: settingsQuery.data.companyName || '',
         addressLine1: settingsQuery.data.addressLine1 || '',
         addressLine2: settingsQuery.data.addressLine2 || '',
         phone: settingsQuery.data.phone || '',
+        phone2: settingsQuery.data.phone2 || '',
         email: settingsQuery.data.email || '',
+        website: settingsQuery.data.website || '',
         logoUrl: settingsQuery.data.logoUrl || '',
         invoiceTermsDefaultText: settingsQuery.data.invoiceTermsDefaultText || '',
         deliveryTermsDefaultText: settingsQuery.data.deliveryTermsDefaultText || '',
@@ -101,14 +109,26 @@ export default function CompanySettingsPage() {
                 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="phone">Phone Number</Label>
+                    <Label htmlFor="phone">Phone Number 1</Label>
                     <Input
                       id="phone"
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+92 300 1234567"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone2">Phone Number 2</Label>
+                    <Input
+                      id="phone2"
+                      value={formData.phone2}
+                      onChange={(e) => setFormData({ ...formData, phone2: e.target.value })}
+                      placeholder="+92 300 7654321"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="email">Email Address</Label>
                     <Input
@@ -117,6 +137,15 @@ export default function CompanySettingsPage() {
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       placeholder="sales@company.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="website">Website</Label>
+                    <Input
+                      id="website"
+                      value={formData.website}
+                      onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                      placeholder="www.company.com"
                     />
                   </div>
                 </div>

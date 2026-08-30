@@ -22,9 +22,14 @@ export class WeightedAverageCostingStrategy implements CostingStrategy {
     const existingQty = existing?.quantityOnHandMirror ?? ZERO;
     const existingCost = existing?.weightedAverageCost ?? ZERO;
     const newQty = existingQty.plus(quantity);
-    const newCost = newQty.isZero()
+    // A receipt can be fulfilling an invoice-created shortage. Weighting a positive receipt
+    // against a negative quantity can produce a negative or otherwise meaningless unit cost,
+    // so the arriving stock's actual cost becomes the current cost until quantity is positive.
+    const newCost = existingQty.isNegative()
       ? unitCost
-      : existingQty.times(existingCost).plus(quantity.times(unitCost)).dividedBy(newQty);
+      : newQty.isZero()
+        ? unitCost
+        : existingQty.times(existingCost).plus(quantity.times(unitCost)).dividedBy(newQty);
 
     await tx.productCost.upsert({
       where: { productId_locationId: { productId: params.productId, locationId: params.locationId } },

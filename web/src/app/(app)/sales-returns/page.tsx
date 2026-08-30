@@ -66,14 +66,14 @@ interface Paginated<T> {
  * was sold: Sq ft = pieces × width × length ÷ 144, or entered directly in Self mode. */
 const SIZE_OPTIONS: { value: string; label: string }[] = [
   { value: 'FIX', label: 'Fix (custom width)' },
-  { value: '6', label: '6 in (standard)' },
-  { value: '8', label: '8 in (standard)' },
-  { value: '12', label: '12 in (standard)' },
-  { value: '18', label: '18 in (standard)' },
-  { value: '24', label: '24 in (standard)' },
-  { value: '36', label: '36 in (standard)' },
-  { value: '48', label: '48 in (standard)' },
-  { value: '52', label: '52 in (standard)' },
+  { value: '6', label: '6 (standard)' },
+  { value: '8', label: '8 (standard)' },
+  { value: '12', label: '12 (standard)' },
+  { value: '18', label: '18 (standard)' },
+  { value: '24', label: '24 (standard)' },
+  { value: '36', label: '36 (standard)' },
+  { value: '48', label: '48 (standard)' },
+  { value: '52', label: '52 (standard)' },
   { value: 'SELF', label: 'Self (enter sq ft directly)' },
 ];
 
@@ -125,14 +125,6 @@ function previewSqft(line: ReturnLineDraft): number | null {
   if (!Number.isFinite(effectiveWidth) || effectiveWidth <= 0 || !Number.isFinite(effectiveLength) || effectiveLength <= 0) return null;
 
   return Math.round(((pieces * effectiveWidth * effectiveLength) / 144) * 100) / 100;
-}
-
-function dimensionSummary(item: SalesReturnItem): string {
-  if (item.sizeOption === 'SELF' || (!item.width && !item.length)) return `${item.quantity} sq ft (entered directly)`;
-  const trimmed =
-    item.usableWidth && item.usableLength && (Number(item.usableWidth) !== Number(item.width) || Number(item.usableLength) !== Number(item.length));
-  const base = `${item.pieces ?? '?'} pc(s) × ${item.width ?? '?'}in × ${item.length ?? '?'}in`;
-  return trimmed ? `${base} → usable ${item.usableWidth}in × ${item.usableLength}in` : base;
 }
 
 export default function SalesReturnsPage() {
@@ -239,7 +231,11 @@ function SalesReturnsContent() {
           description: line.description || undefined,
           sizeOption: line.sizeOption,
           pieces: line.sizeOption === 'SELF' ? undefined : Number(line.pieces),
-          width: line.sizeOption === 'FIX' ? Number(line.width) : undefined,
+          width: line.sizeOption === 'SELF'
+            ? undefined
+            : line.sizeOption === 'FIX'
+              ? Number(line.width)
+              : Number(line.sizeOption),
           length: line.sizeOption === 'SELF' ? undefined : Number(line.length),
           usableWidth: line.trimmed && line.usableWidth ? Number(line.usableWidth) : undefined,
           usableLength: line.trimmed && line.usableLength ? Number(line.usableLength) : undefined,
@@ -383,17 +379,21 @@ function SalesReturnsContent() {
                               ) : (
                                 <>
                                   <div className="col-span-2">
-                                    <Label className="text-xs text-muted-foreground">Pieces</Label>
+                                    <Label className="text-xs text-muted-foreground">Quantity</Label>
                                     <Input type="number" step="1" value={line.pieces} onChange={(e) => updateLine(item.id, { pieces: e.target.value })} />
                                   </div>
-                                  {line.sizeOption === 'FIX' && (
-                                    <div className="col-span-2">
-                                      <Label className="text-xs text-muted-foreground">Width (in)</Label>
-                                      <Input type="number" step="0.01" value={line.width} onChange={(e) => updateLine(item.id, { width: e.target.value })} />
-                                    </div>
-                                  )}
                                   <div className="col-span-2">
-                                    <Label className="text-xs text-muted-foreground">Length (in)</Label>
+                                    <Label className="text-xs text-muted-foreground">Width</Label>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      value={line.sizeOption === 'FIX' ? line.width : line.sizeOption}
+                                      disabled={line.sizeOption !== 'FIX'}
+                                      onChange={(e) => updateLine(item.id, { width: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <Label className="text-xs text-muted-foreground">Length</Label>
                                     <Input type="number" step="0.01" value={line.length} onChange={(e) => updateLine(item.id, { length: e.target.value })} />
                                   </div>
                                 </>
@@ -420,7 +420,7 @@ function SalesReturnsContent() {
                             {line.trimmed && line.sizeOption !== 'SELF' && (
                               <div className="grid grid-cols-12 gap-2 pl-5">
                                 <div className="col-span-3">
-                                  <Label className="text-xs text-muted-foreground">Usable width (in)</Label>
+                                  <Label className="text-xs text-muted-foreground">Usable width</Label>
                                   <Input
                                     type="number"
                                     step="0.01"
@@ -429,7 +429,7 @@ function SalesReturnsContent() {
                                   />
                                 </div>
                                 <div className="col-span-3">
-                                  <Label className="text-xs text-muted-foreground">Usable length (in)</Label>
+                                  <Label className="text-xs text-muted-foreground">Usable length</Label>
                                   <Input
                                     type="number"
                                     step="0.01"
@@ -506,26 +506,41 @@ function SalesReturnsContent() {
                                 <Table>
                                   <TableHeader>
                                     <TableRow>
+                                      <TableHead className="text-right">Qty</TableHead>
                                       <TableHead>Product</TableHead>
-                                      <TableHead>Basis</TableHead>
+                                      <TableHead className="text-right">Width</TableHead>
+                                      <TableHead className="text-right">Length</TableHead>
+                                      <TableHead className="text-right">Usable width</TableHead>
+                                      <TableHead className="text-right">Usable length</TableHead>
                                       <TableHead className="text-right">Sq ft</TableHead>
                                       <TableHead className="text-right">Rate</TableHead>
                                       <TableHead className="text-right">Amount</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {r.items.map((item) => (
-                                      <TableRow key={item.id}>
-                                        <TableCell>
-                                          {item.product.name}
-                                          {item.description && <div className="text-xs text-muted-foreground">{item.description}</div>}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">{dimensionSummary(item)}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.quantity}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.rate}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.amount}</TableCell>
-                                      </TableRow>
-                                    ))}
+                                    {r.items.map((item) => {
+                                      const isSelf = item.sizeOption === 'SELF';
+                                      const width = isSelf
+                                        ? '—'
+                                        : item.width ?? (item.sizeOption && item.sizeOption !== 'FIX' ? item.sizeOption : '—');
+                                      const length = isSelf ? '—' : item.length ?? '—';
+                                      return (
+                                        <TableRow key={item.id}>
+                                          <TableCell className="text-right font-mono">{isSelf ? '—' : item.pieces ?? '—'}</TableCell>
+                                          <TableCell>
+                                            {item.product.name}
+                                            {item.description && <div className="text-xs text-muted-foreground">{item.description}</div>}
+                                          </TableCell>
+                                          <TableCell className="text-right font-mono">{width}</TableCell>
+                                          <TableCell className="text-right font-mono">{length}</TableCell>
+                                          <TableCell className="text-right font-mono">{isSelf ? '—' : item.usableWidth ?? width}</TableCell>
+                                          <TableCell className="text-right font-mono">{isSelf ? '—' : item.usableLength ?? length}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.quantity}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.rate}</TableCell>
+                                          <TableCell className="text-right font-mono">{item.amount}</TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
                                   </TableBody>
                                 </Table>
                               </div>

@@ -16,10 +16,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/searchable-select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface Customer {
   id: string;
   name: string;
+  currentBalance: string;
 }
 interface Product {
   id: string;
@@ -69,14 +80,14 @@ interface Paginated<T> {
  * typed sq ft — must match apps/api/src/quotation-engine/sqft-dimensions.strategy.ts exactly. */
 const SIZE_OPTIONS: { value: string; label: string }[] = [
   { value: 'FIX', label: 'Fix (custom width)' },
-  { value: '6', label: '6 in (standard)' },
-  { value: '8', label: '8 in (standard)' },
-  { value: '12', label: '12 in (standard)' },
-  { value: '18', label: '18 in (standard)' },
-  { value: '24', label: '24 in (standard)' },
-  { value: '36', label: '36 in (standard)' },
-  { value: '48', label: '48 in (standard)' },
-  { value: '52', label: '52 in (standard)' },
+  { value: '6', label: '6 (standard)' },
+  { value: '8', label: '8 (standard)' },
+  { value: '12', label: '12 (standard)' },
+  { value: '18', label: '18 (standard)' },
+  { value: '24', label: '24 (standard)' },
+  { value: '36', label: '36 (standard)' },
+  { value: '48', label: '48 (standard)' },
+  { value: '52', label: '52 (standard)' },
   { value: 'SELF', label: 'Self (enter sq ft directly)' },
 ];
 
@@ -132,13 +143,6 @@ function formatAmount(value: number): string {
 }
 
 
-function dimensionSummary(p: QuotationItemInputParameters): string {
-  if (!p.sizeOption) return '—';
-  if (p.sizeOption === 'SELF') return 'Sq ft entered directly';
-  const width = p.width != null ? p.width : (p.sizeOption !== 'FIX' ? p.sizeOption : '?');
-  return `${p.quantity ?? '?'} pc(s) × ${width}in × ${p.length ?? '?'}in`;
-}
-
 export default function QuotationsPage() {
   return (
     <PermissionGate permission="quotation.view">
@@ -169,7 +173,6 @@ function QuotationsContent() {
   const [items, setItems] = useState<DraftItemRow[]>([newRow()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [convertingId, setConvertingId] = useState<string | null>(null);
-  const [convertLocationId, setConvertLocationId] = useState('');
 
   // QTN-02: create a customer inline without leaving the quotation form.
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
@@ -182,7 +185,6 @@ function QuotationsContent() {
   const productsQuery = useQuery({ queryKey: ['products-picker'], queryFn: () => apiClient.get<Product[]>('/product-picker') });
   const locationsQuery = useQuery({ queryKey: ['locations'], queryFn: () => apiClient.get<{ id: string; name: string }[]>('/locations') });
   const defaultFactoryLocation = locationsQuery.data?.find((location) => location.name.toLowerCase().includes('factory'));
-  const effectiveConvertLocationId = convertLocationId || defaultFactoryLocation?.id || '';
   const quotationsQuery = useQuery({
     queryKey: ['quotations', page, search],
     queryFn: () =>
@@ -192,12 +194,10 @@ function QuotationsContent() {
   });
 
   const convertMutation = useMutation({
-    mutationFn: ({ id, locationId }: { id: string; locationId: string }) =>
-      apiClient.post(`/sales-invoices/from-quotation/${id}`, { locationId }),
+    mutationFn: (id: string) => apiClient.post(`/sales-invoices/from-quotation/${id}`, {}),
     onSuccess: () => {
       toast.success('Converted to a finalized sales invoice');
       setConvertingId(null);
-      setConvertLocationId('');
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not convert quotation'),
@@ -334,7 +334,7 @@ function QuotationsContent() {
     }
     setIsSubmitting(true);
     if ((Number(advanceReceived) || 0) > quotationTotal) {
-      toast.error('Advance received cannot exceed the total amount');
+      toast.error("Received cannot exceed the customer's total amount");
       setIsSubmitting(false);
       return;
     }
@@ -373,10 +373,15 @@ function QuotationsContent() {
     }
   }
 
-  const quotationSubtotal = items.reduce((total, row) => total + (previewAmount(row) ?? 0), 0);
-  const quotationTotal = quotationSubtotal;
+  const quotationSquareFeet = items.reduce((total, row) => total + (previewSqft(row) ?? 0), 0);
+  const quotationGrossTotal = items.reduce((total, row) => total + (previewAmount(row) ?? 0), 0);
+  const selectedCustomer = customersQuery.data?.find((customer) => customer.id === customerId);
+  // A negative customer balance is an available credit, not an amount they owe.
+  // Quotations only carry forward an outstanding receivable as Previous Balance.
+  const quotationPreviousBalance = Math.max(0, Number(selectedCustomer?.currentBalance ?? 0));
+  const quotationTotal = quotationPreviousBalance + quotationGrossTotal;
   const quotationAdvance = Math.max(0, Number(advanceReceived) || 0);
-  const quotationRemaining = Math.max(0, quotationTotal - quotationAdvance);
+  const quotationBalance = Math.max(0, quotationTotal - quotationAdvance);
 
   return (
     <div className="flex flex-col gap-6">
@@ -511,6 +516,12 @@ function QuotationsContent() {
                               placeholder="Select product"
                               triggerId={`quotation-product-${row.key}`}
                               openOnFocus
+                              onTriggerKeyDown={(event) => {
+                                if (event.key === 'Tab' && !event.shiftKey) {
+                                  event.preventDefault();
+                                  document.getElementById(`quotation-location-${row.key}`)?.focus();
+                                }
+                              }}
                               triggerClassName="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
                             />
                           </td>
@@ -520,7 +531,10 @@ function QuotationsContent() {
                               value={row.locationId || defaultFactoryLocation?.id || ''}
                               onValueChange={(value) => updateItem(row.key, { locationId: value ?? defaultFactoryLocation?.id ?? '' })}
                             >
-                              <SelectTrigger className="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none">
+                              <SelectTrigger
+                                id={`quotation-location-${row.key}`}
+                                className="h-8 text-sm rounded-none border-0 bg-transparent focus:ring-1 focus:ring-inset px-2 shadow-none"
+                              >
                                 <SelectValue placeholder="Select location" />
                               </SelectTrigger>
                               <SelectContent>
@@ -625,20 +639,28 @@ function QuotationsContent() {
 
             <div className="ml-auto w-full max-w-sm rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
               <div className="flex items-center justify-between gap-4 text-muted-foreground">
-                <span>Subtotal</span>
-                <span className="font-mono text-foreground">{formatAmount(quotationSubtotal)}</span>
+                <span>T. Sq. Ft.</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationSquareFeet)}</span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                <span>Gross Total</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationGrossTotal)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                <span>Previous Balance</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationPreviousBalance)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-4">
                 <span>Total Amount</span>
-                <span className="font-mono text-foreground">{formatAmount(quotationTotal)}</span>
+                <span className="font-mono">{formatAmount(quotationTotal)}</span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
-                <span>Advance Received</span>
+                <span>Received</span>
                 <span className="font-mono text-foreground">{formatAmount(quotationAdvance)}</span>
               </div>
               <div className="mt-2 flex items-center justify-between gap-4 border-t border-border/70 pt-2 text-base font-semibold">
-                <span>Remaining Amount</span>
-                <span className="font-mono">{formatAmount(quotationRemaining)}</span>
+                <span>Balance</span>
+                <span className="font-mono">{formatAmount(quotationBalance)}</span>
               </div>
             </div>
 
@@ -692,6 +714,34 @@ function QuotationsContent() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={convertingId !== null}
+        onOpenChange={(open) => {
+          if (!open && !convertMutation.isPending) setConvertingId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to convert?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This quotation will be converted into a finalized sales invoice and cannot be edited or cancelled afterward.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={convertMutation.isPending}>No</AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              disabled={convertMutation.isPending || !convertingId}
+              onClick={() => {
+                if (convertingId) convertMutation.mutate(convertingId);
+              }}
+            >
+              {convertMutation.isPending ? 'Converting...' : 'Yes'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
@@ -772,14 +822,7 @@ function QuotationsContent() {
                               </Button>
                             )}
                             {q.status === 'APPROVED' && canConvert && (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  const nextConvertingId = convertingId === q.id ? null : q.id;
-                                  setConvertingId(nextConvertingId);
-                                  setConvertLocationId(nextConvertingId ? defaultFactoryLocation?.id ?? '' : '');
-                                }}
-                              >
+                              <Button size="sm" onClick={() => setConvertingId(q.id)}>
                                 Convert to Invoice
                               </Button>
                             )}
@@ -792,83 +835,64 @@ function QuotationsContent() {
                             </Button>
                           </TableCell>
                         </TableRow>
-                        {convertingId === q.id && (
-                          <TableRow>
-                            <TableCell colSpan={6} className="bg-muted/30">
-                              <div className="flex items-end gap-3 py-2">
-                                <div className="space-y-2 w-56">
-                                  <Label>Receiving/selling location</Label>
-                                  <Select
-                                    items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
-                                    value={effectiveConvertLocationId}
-                                    onValueChange={(v) => setConvertLocationId(v ?? '')}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select location" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {locationsQuery.data?.map((l) => (
-                                        <SelectItem key={l.id} value={l.id}>
-                                          {l.name}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <Button
-                                  size="sm"
-                                  disabled={!effectiveConvertLocationId || convertMutation.isPending}
-                                  onClick={() => convertMutation.mutate({ id: q.id, locationId: effectiveConvertLocationId })}
-                                >
-                                  Confirm conversion
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => setConvertingId(null)}>
-                                  Cancel
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
                         {expandedId === q.id && (
                           <TableRow>
                             <TableCell colSpan={6} className="bg-muted/30">
                               <div className="text-sm space-y-1 py-2">
                                 {q.notes && <p className="text-muted-foreground whitespace-pre-line">{q.notes}</p>}
-                                <Table>
+                                <Table className="table-fixed text-xs">
                                   <TableHeader>
                                     <TableRow>
-                                      <TableHead>Product</TableHead>
-                                      <TableHead>Basis</TableHead>
-                                      <TableHead className="text-right">Sq ft</TableHead>
-                                      <TableHead className="text-right">Rate</TableHead>
-                                      <TableHead className="text-right">Amount</TableHead>
+                                      <TableHead className="w-[6%] px-2">Qty</TableHead>
+                                      <TableHead className="w-[17%] px-2">Product</TableHead>
+                                      <TableHead className="w-[12%] px-2">Location</TableHead>
+                                      <TableHead className="w-[17%] px-2">Size Formula</TableHead>
+                                      <TableHead className="w-[9%] px-2">Width</TableHead>
+                                      <TableHead className="w-[9%] px-2">Length</TableHead>
+                                      <TableHead className="w-[10%] px-2 text-right">Sq ft</TableHead>
+                                      <TableHead className="w-[9%] px-2 text-right">Rate</TableHead>
+                                      <TableHead className="w-[11%] px-2 text-right">Amount</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {q.items.map((item) => (
-                                      <TableRow key={item.id}>
-                                        <TableCell>
-                                          {item.product.name}
-                                          {item.inputParameters.description && (
-                                            <div className="text-xs text-muted-foreground">{item.inputParameters.description}</div>
-                                          )}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">{dimensionSummary(item.inputParameters)}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.computedQuantity}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.computedRate}</TableCell>
-                                        <TableCell className="text-right font-mono">{item.computedAmount}</TableCell>
-                                      </TableRow>
-                                    ))}
+                                    {q.items.map((item) => {
+                                      const params = item.inputParameters;
+                                      const isSelf = params.sizeOption === 'SELF';
+                                      const location = locationsQuery.data?.find((entry) => entry.id === params.locationId);
+                                      const sizeFormula = SIZE_OPTIONS.find((option) => option.value === params.sizeOption)?.label;
+                                      const width = isSelf
+                                        ? '—'
+                                        : params.width ?? (params.sizeOption && params.sizeOption !== 'FIX' ? params.sizeOption : '—');
+
+                                      return (
+                                        <TableRow key={item.id}>
+                                          <TableCell className="px-2 font-mono">{isSelf ? '—' : (params.quantity ?? '—')}</TableCell>
+                                          <TableCell className="px-2 whitespace-normal break-words">
+                                            {item.product.name}
+                                            {params.description && (
+                                              <div className="text-xs text-muted-foreground">{params.description}</div>
+                                            )}
+                                          </TableCell>
+                                          <TableCell className="px-2 whitespace-normal break-words">{location?.name ?? defaultFactoryLocation?.name ?? '—'}</TableCell>
+                                          <TableCell className="px-2 whitespace-normal text-muted-foreground">{sizeFormula ?? params.sizeOption ?? '—'}</TableCell>
+                                          <TableCell className="px-2 font-mono">{width}</TableCell>
+                                          <TableCell className="px-2 font-mono">{isSelf ? '—' : (params.length ?? '—')}</TableCell>
+                                          <TableCell className="px-2 text-right font-mono">{item.computedQuantity}</TableCell>
+                                          <TableCell className="px-2 text-right font-mono">{item.computedRate}</TableCell>
+                                          <TableCell className="px-2 text-right font-mono">{item.computedAmount}</TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
                                     <TableRow>
-                                      <TableCell colSpan={4} className="text-right text-muted-foreground">Subtotal</TableCell>
+                                      <TableCell colSpan={8} className="text-right text-muted-foreground">Subtotal</TableCell>
                                       <TableCell className="text-right font-mono">{formatAmount(Number(q.subtotal))}</TableCell>
                                     </TableRow>
                                     <TableRow>
-                                      <TableCell colSpan={4} className="text-right text-muted-foreground">Advance Received</TableCell>
+                                      <TableCell colSpan={8} className="text-right text-muted-foreground">Advance Received</TableCell>
                                       <TableCell className="text-right font-mono">{formatAmount(Number(q.advanceReceived))}</TableCell>
                                     </TableRow>
                                     <TableRow>
-                                      <TableCell colSpan={4} className="text-right font-semibold">Remaining Amount</TableCell>
+                                      <TableCell colSpan={8} className="text-right font-semibold">Remaining Amount</TableCell>
                                       <TableCell className="text-right font-mono font-semibold">
                                         {formatAmount(Math.max(0, Number(q.totalAmount) - Number(q.advanceReceived)))}
                                       </TableCell>

@@ -46,6 +46,7 @@ interface LowStockRow {
   locationName: string;
   quantity: string;
   reorderLevel: string | null;
+  isNegativeStock: boolean;
 }
 interface TransactionRow {
   id: string;
@@ -91,6 +92,7 @@ export default function DashboardPage() {
   // Low stock alerts, top products, recent transactions, and needs-your-action all start
   // collapsed to a single summary row — clicking the header expands them in place.
   const [needsActionOpen, setNeedsActionOpen] = useState(false);
+  const [negativeStockOpen, setNegativeStockOpen] = useState(true);
   const [lowStockOpen, setLowStockOpen] = useState(false);
   const [topProductsOpen, setTopProductsOpen] = useState(false);
   const [recentTxnOpen, setRecentTxnOpen] = useState(false);
@@ -118,6 +120,11 @@ export default function DashboardPage() {
   const lowStockQuery = useQuery({
     queryKey: ['dashboard-low-stock'],
     queryFn: () => apiClient.get<LowStockRow[]>('/inventory/low-stock'),
+    enabled: hasPermission('inventory.view'),
+  });
+  const negativeStockQuery = useQuery({
+    queryKey: ['dashboard-negative-stock'],
+    queryFn: () => apiClient.get<LowStockRow[]>('/inventory/negative-stock'),
     enabled: hasPermission('inventory.view'),
   });
   const productPnlQuery = useQuery({
@@ -212,6 +219,45 @@ export default function DashboardPage() {
                   </li>
                 ))}
               </ul>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {hasPermission('inventory.view') && (
+        <Card className={cn(negativeStockQuery.data?.length && 'border-destructive/50')}>
+          <CardHeader className="cursor-pointer select-none" onClick={() => setNegativeStockOpen((o) => !o)}>
+            <CardTitle className="text-base flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="size-4 text-destructive" />
+                Negative stock - needs arrangement
+                {negativeStockQuery.data?.length ? <Badge variant="destructive">{negativeStockQuery.data.length}</Badge> : null}
+              </span>
+              {negativeStockOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+            </CardTitle>
+            <CardDescription>Items invoiced to customers before enough stock was available.</CardDescription>
+          </CardHeader>
+          {negativeStockOpen && (
+            <CardContent>
+              {negativeStockQuery.isLoading ? (
+                <Skeleton className="h-32 w-full" />
+              ) : negativeStockQuery.data?.length ? (
+                <ul className="space-y-2 text-sm">
+                  {negativeStockQuery.data.slice(0, 8).map((row) => (
+                    <li key={`${row.productId}:${row.locationName}`} className="flex items-center justify-between">
+                      <span>
+                        {row.productName} <span className="text-muted-foreground">({row.locationName})</span>
+                      </span>
+                      <Badge variant="destructive">{Number(row.quantity).toLocaleString()} sq ft</Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">No stock needs to be arranged right now.</p>
+              )}
+              <Button render={<Link href="/inventory?negativeStockOnly=true" />} nativeButton={false} variant="outline" size="sm" className="mt-3">
+                View negative stock
+              </Button>
             </CardContent>
           )}
         </Card>

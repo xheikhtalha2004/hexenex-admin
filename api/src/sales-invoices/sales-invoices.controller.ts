@@ -48,7 +48,7 @@ export class SalesInvoicesController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const [invoice, company] = await Promise.all([
-      this.salesInvoices.findOrThrow(id),
+      this.salesInvoices.findForPdf(id),
       this.companySettings.get(),
     ]);
     const buffer = await this.pdf.renderHtmlToPdf(
@@ -68,7 +68,7 @@ export class SalesInvoicesController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const [invoice, company] = await Promise.all([
-      this.salesInvoices.findOrThrow(id),
+      this.salesInvoices.findForPdf(id),
       this.companySettings.get(),
     ]);
     const buffer = await this.pdf.renderHtmlToPdf(

@@ -15,6 +15,9 @@ export class PdfService implements OnModuleDestroy {
       const puppeteer = await import('puppeteer');
       this.browserPromise = puppeteer.default.launch({
         headless: true,
+        // Company logos can be hosted on customer-managed sites with an incomplete or
+        // self-signed certificate chain. This browser is isolated to PDF rendering only.
+        acceptInsecureCerts: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
     }

@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface Account {
   id: string;
@@ -66,12 +67,24 @@ function AccountsContent() {
   const [bankOpeningBalance, setBankOpeningBalance] = useState('0');
   const [isAddingBank, setIsAddingBank] = useState(false);
 
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferSourceId, setTransferSourceId] = useState('');
+  const [transferDestinationId, setTransferDestinationId] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferRemarks, setTransferRemarks] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
+
   const accountsQuery = useQuery({ queryKey: ['accounts'], queryFn: () => apiClient.get<AccountsSummary>('/accounts') });
   const historyQuery = useQuery({
     queryKey: ['account-transactions', selectedId],
     queryFn: () => apiClient.get<Paginated<AccountTransaction>>(`/accounts/${selectedId}/transactions?pageSize=50`),
     enabled: !!selectedId,
   });
+
+  const transferableAccounts: Account[] = [...(accountsQuery.data?.cash ? [accountsQuery.data.cash] : []), ...(accountsQuery.data?.banks ?? [])];
+  const transferSource = transferableAccounts.find((account) => account.id === transferSourceId);
+  const transferDestination = transferableAccounts.find((account) => account.id === transferDestinationId);
+  const transferDestinationOptions = transferSource ? (transferSource.type === 'CASH' ? (accountsQuery.data?.banks ?? []) : accountsQuery.data?.cash ? [accountsQuery.data.cash] : []) : [];
 
   const addCashMutation = useMutation({
     mutationFn: () => apiClient.post('/accounts/cash/add', { amount: Number(cashAmount), remarks: cashRemarks || undefined }),
@@ -108,6 +121,30 @@ function AccountsContent() {
     onSettled: () => setIsAddingBank(false),
   });
 
+  const transferMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post('/accounts/transfer', {
+        sourceAccountId: transferSourceId,
+        destinationAccountId: transferDestinationId,
+        amount: Number(transferAmount),
+        remarks: transferRemarks.trim() || undefined,
+      }),
+    onSuccess: () => {
+      const sourceName = transferableAccounts.find((account) => account.id === transferSourceId)?.name;
+      const destinationName = transferableAccounts.find((account) => account.id === transferDestinationId)?.name;
+      toast.success(`Funds transferred from ${sourceName ?? 'source'} to ${destinationName ?? 'destination'}`);
+      setShowTransfer(false);
+      setTransferSourceId('');
+      setTransferDestinationId('');
+      setTransferAmount('');
+      setTransferRemarks('');
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['account-transactions'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not transfer funds'),
+    onSettled: () => setIsTransferring(false),
+  });
+
   function onAddCash(e: React.FormEvent) {
     e.preventDefault();
     if (!cashAmount || Number(cashAmount) <= 0) {
@@ -126,6 +163,48 @@ function AccountsContent() {
     }
     setIsAddingBank(true);
     addBankMutation.mutate();
+  }
+
+  function openTransferForm() {
+    if (showTransfer) {
+      setShowTransfer(false);
+      return;
+    }
+    const source = accountsQuery.data?.cash ?? accountsQuery.data?.banks[0];
+    const destination = source?.type === 'CASH' ? accountsQuery.data?.banks[0] : accountsQuery.data?.cash;
+    if (!source || !destination) {
+      toast.error('A Cash account and at least one Bank account are required');
+      return;
+    }
+    setTransferSourceId(source.id);
+    setTransferDestinationId(destination.id);
+    setShowTransfer(true);
+  }
+
+  function selectTransferSource(accountId: string) {
+    const source = transferableAccounts.find((account) => account.id === accountId);
+    const destination = source?.type === 'CASH' ? accountsQuery.data?.banks[0] : accountsQuery.data?.cash;
+    setTransferSourceId(accountId);
+    setTransferDestinationId(destination?.id ?? '');
+  }
+
+  function onTransfer(e: React.FormEvent) {
+    e.preventDefault();
+    const amount = Number(transferAmount);
+    if (!transferSourceId || !transferDestinationId) {
+      toast.error('Select both accounts');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Enter a valid amount');
+      return;
+    }
+    if (transferSource && amount > Number(transferSource.currentBalance)) {
+      toast.error(`Insufficient balance in ${transferSource.name}`);
+      return;
+    }
+    setIsTransferring(true);
+    transferMutation.mutate();
   }
 
   const selectedAccount =
@@ -197,6 +276,9 @@ function AccountsContent() {
           <Button variant="outline" onClick={() => setShowAddBank((s) => !s)}>
             Add Bank Account
           </Button>
+          <Button variant="outline" onClick={openTransferForm}>
+            Transfer Money
+          </Button>
         </div>
       )}
 
@@ -256,6 +338,69 @@ function AccountsContent() {
               <div className="sm:col-span-4">
                 <Button type="submit" disabled={isAddingBank}>
                   {isAddingBank ? 'Adding…' : 'Add bank account'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
+
+      {canManage && showTransfer && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Transfer between Bank and Cash</CardTitle>
+            <CardDescription>Move money from Cash to a Bank account or from a Bank account to Cash. The company&apos;s total funds stay unchanged.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={onTransfer} className="grid gap-4 sm:grid-cols-4 items-end">
+              <div className="space-y-2">
+                <Label>Transfer from</Label>
+                <Select value={transferSourceId || undefined} onValueChange={(value) => value && selectTransferSource(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select account">
+                      {transferSource ? `${transferSource.name} — ${Number(transferSource.currentBalance).toLocaleString()}` : 'Select account'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {transferableAccounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.name} — {Number(account.currentBalance).toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Transfer to</Label>
+                <Select value={transferDestinationId || undefined} onValueChange={(value) => value && setTransferDestinationId(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select account">
+                      {transferDestination ? `${transferDestination.name} — ${Number(transferDestination.currentBalance).toLocaleString()}` : 'Select account'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {transferDestinationOptions.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.name} — {Number(account.currentBalance).toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="transferAmount">Amount</Label>
+                <Input id="transferAmount" type="number" min="0.01" step="0.01" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="transferRemarks">Remarks</Label>
+                <Input id="transferRemarks" placeholder="Optional" value={transferRemarks} onChange={(e) => setTransferRemarks(e.target.value)} />
+              </div>
+              <div className="sm:col-span-4 flex gap-2">
+                <Button type="submit" disabled={isTransferring}>
+                  {isTransferring ? 'Transferring…' : 'Confirm transfer'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowTransfer(false)}>
+                  Cancel
                 </Button>
               </div>
             </form>

@@ -20,7 +20,12 @@ export class InventoryController {
 
   @Get('low-stock')
   getLowStock(@Query() query: ListBalancesQueryDto) {
-    return this.inventory.getBalances({ ...query, lowStockOnly: true });
+    return this.inventory.getBalances({ ...query, lowStockOnly: true, negativeStockOnly: false });
+  }
+
+  @Get('negative-stock')
+  getNegativeStock(@Query() query: ListBalancesQueryDto) {
+    return this.inventory.getBalances({ ...query, lowStockOnly: false, negativeStockOnly: true });
   }
 
   @Get('movements')

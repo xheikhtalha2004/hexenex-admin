@@ -35,7 +35,7 @@ export class PurchasesController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const [invoice, company] = await Promise.all([
-      this.purchases.findOrThrow(id),
+      this.purchases.findForPdf(id),
       this.companySettings.get(),
     ]);
     const buffer = await this.pdf.renderHtmlToPdf(

@@ -5,9 +5,9 @@ import {
   formatDate,
   formatMoney,
   customTableHtml,
-  TableColumn,
   Money,
-  totalsHtml,
+  splitSummaryHtml,
+  UNIFIED_INVOICE_STYLES,
 } from './document-shell';
 
 interface QuotationItemForTemplate {
@@ -39,7 +39,8 @@ interface QuotationForTemplate {
   discountAmount: Money;
   totalAmount: Money;
   advanceReceived?: Money;
-  customer: { name: string };
+  preparedByName: string;
+  customer: { name: string; currentBalance: Money };
   items: QuotationItemForTemplate[];
 }
 
@@ -48,13 +49,13 @@ export function quotationHtml(
   company: CompanySettingsForTemplate,
 ): string {
   const columns = [
-    { header: 'Quantity', align: 'right' as const },
-    { header: 'Product' },
-    { header: 'Width', align: 'right' as const },
-    { header: 'Length', align: 'right' as const },
-    { header: 'Rate', align: 'right' as const },
-    { header: 'Total Square Feet', align: 'right' as const },
-    { header: 'Amount or Price', align: 'right' as const },
+    { header: 'Qty', align: 'center' as const },
+    { header: 'Product', align: 'center' as const },
+    { header: 'Width', align: 'center' as const },
+    { header: 'Length', align: 'center' as const },
+    { header: 'Sq Ft', align: 'center' as const },
+    { header: 'Rate', align: 'center' as const },
+    { header: 'Amount', align: 'center' as const },
   ];
 
   const rows = quotation.items.map((item) => {
@@ -79,24 +80,40 @@ export function quotationHtml(
       esc(item.product.name),
       w,
       l,
-      formatMoney(item.computedRate),
       formatMoney(item.computedQuantity),
+      formatMoney(item.computedRate),
       formatMoney(item.computedAmount),
     ];
   });
 
-  const advanceReceived = Number(quotation.advanceReceived ?? 0);
-  const remainingAmount = Math.max(0, Number(quotation.totalAmount) - advanceReceived);
+  const totalSquareFeet = quotation.items.reduce(
+    (sum, item) => sum + Number(item.computedQuantity),
+    0,
+  );
+  const grossTotal = Number(quotation.subtotal);
+  // Customer credit is not an outstanding Previous Balance on a quotation.
+  const previousBalance = Math.max(
+    0,
+    Number(quotation.customer.currentBalance ?? 0),
+  );
+  const totalAmount = previousBalance + grossTotal;
+  const received = Number(quotation.advanceReceived ?? 0);
+  const balance = Math.max(0, totalAmount - received);
+
+  const summaryRows = [
+    { label: 'Gross Total', value: grossTotal, emphasis: 'muted' as const },
+    { label: 'Previous Balance', value: previousBalance, emphasis: 'muted' as const },
+    { label: 'Total Amount', value: totalAmount },
+    { label: 'Received', value: received, emphasis: 'muted' as const },
+    ...(balance > 0
+      ? [{ label: 'Balance', value: balance, emphasis: 'grand' as const }]
+      : []),
+  ];
 
   const bodyHtml = `
     <div class="section-label">Items</div>
     ${customTableHtml(columns, rows)}
-    ${totalsHtml([
-      { label: 'Subtotal', value: quotation.subtotal, emphasis: 'muted' },
-      { label: 'Total Amount', value: quotation.totalAmount },
-      { label: 'Advance Received', value: advanceReceived, emphasis: 'muted' },
-      { label: 'Remaining Amount', value: remainingAmount, emphasis: 'grand' },
-    ])}
+    ${splitSummaryHtml('T. Sq. Ft.', totalSquareFeet, summaryRows)}
     ${quotation.notes ? `<div class="notes"><div class="block"><div class="heading">Notes</div><div>${esc(quotation.notes)}</div></div></div>` : ''}
   `;
 
@@ -104,15 +121,18 @@ export function quotationHtml(
     company,
     title: 'Quotation',
     documentNumber: quotation.quotationNumber,
-    meta: [
+    titleMeta: [
       { label: 'Date', value: formatDate(quotation.quotationDate) },
-      { label: 'Customer', value: quotation.customer.name },
       {
-        label: 'Valid Until',
+        label: 'Valid Until Date',
         value: quotation.validUntil ? formatDate(quotation.validUntil) : 'N/A',
       },
     ],
+    meta: [
+      { label: 'Customer', value: quotation.customer.name },
+    ],
     bodyHtml,
-    signOff: ['Prepared By', 'Customer Acceptance'],
+    footerLeft: `Prepared by: ${quotation.preparedByName}`,
+    extraStyles: UNIFIED_INVOICE_STYLES,
   });
 }

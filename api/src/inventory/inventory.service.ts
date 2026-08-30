@@ -24,6 +24,7 @@ export interface InventoryBalanceRow {
   quantity: Prisma.Decimal;
   reorderLevel: Prisma.Decimal | null;
   isLowStock: boolean;
+  isNegativeStock: boolean;
 }
 
 @Injectable()
@@ -67,8 +68,13 @@ export class InventoryService {
     for (const product of products) {
       for (const location of locations) {
         const quantity = balanceMap.get(`${product.id}:${location.id}`) ?? ZERO;
-        const isLowStock = product.reorderLevel != null && quantity.lessThan(product.reorderLevel);
+        const isNegativeStock = quantity.isNegative();
+        const isLowStock =
+          !isNegativeStock &&
+          product.reorderLevel != null &&
+          quantity.lessThan(product.reorderLevel);
         if (query.lowStockOnly && !isLowStock) continue;
+        if (query.negativeStockOnly && !isNegativeStock) continue;
         rows.push({
           productId: product.id,
           productName: product.name,
@@ -79,6 +85,7 @@ export class InventoryService {
           quantity,
           reorderLevel: product.reorderLevel,
           isLowStock,
+          isNegativeStock,
         });
       }
     }

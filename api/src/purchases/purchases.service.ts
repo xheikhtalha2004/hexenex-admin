@@ -19,6 +19,7 @@ import { SupplierLedgerService } from '../supplier-ledger/supplier-ledger.servic
 import { paginate } from '../common/pagination.dto';
 import { CreatePurchaseInvoiceDto } from './dto/create-purchase-invoice.dto';
 import { ListPurchasesQueryDto } from './dto/list-purchases-query.dto';
+import { QuotationEngineService } from '../quotation-engine/quotation-engine.service';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -32,6 +33,7 @@ export class PurchasesService {
     private readonly costingRegistry: CostingStrategyRegistry,
     private readonly companySettings: CompanySettingsService,
     private readonly supplierLedger: SupplierLedgerService,
+    private readonly quotationEngine: QuotationEngineService,
   ) {}
 
   async list(query: ListPurchasesQueryDto) {
@@ -66,15 +68,73 @@ export class PurchasesService {
     return invoice;
   }
 
+  async findForPdf(id: string) {
+    const invoice = await this.findOrThrow(id);
+    const creator = await this.prisma.user.findUnique({
+      where: { id: invoice.createdByUserId },
+      select: { fullName: true, email: true },
+    });
+
+    return {
+      ...invoice,
+      preparedByName: creator?.fullName || creator?.email || 'Unknown User',
+    };
+  }
+
   async create(dto: CreatePurchaseInvoiceDto, actorId: string) {
     const settings = await this.companySettings.get();
     const freightAllocationMethod = dto.freightAllocationMethod ?? settings.freightAllocationDefault;
     const freightCost = new Prisma.Decimal(dto.freightCost ?? 0);
     const otherDirectCosts = new Prisma.Decimal(dto.otherDirectCosts ?? 0);
 
-    const itemAmounts = dto.items.map((item) => new Prisma.Decimal(item.quantity).times(item.unitCost));
+    const calculatedItems = dto.items.map((item) => {
+      const hasDimensions =
+        item.sizeOption !== undefined ||
+        item.width !== undefined ||
+        item.length !== undefined ||
+        item.sqft !== undefined;
+
+      if (hasDimensions) {
+        const calculation = this.quotationEngine.calculate(
+          'SQFT_DIMENSIONS',
+          {},
+          {
+            sizeOption: item.sizeOption ?? 'FIX',
+            quantity: item.quantity,
+            width: item.width,
+            length: item.length,
+            sqft: item.sqft,
+            rate: item.unitCost,
+          },
+        );
+        return {
+          ...calculation,
+          inputParameters: {
+            sizeOption: item.sizeOption ?? 'FIX',
+            quantity: item.quantity ?? null,
+            width: item.width ?? null,
+            length: item.length ?? null,
+            sqft: item.sqft ?? null,
+            rate: item.unitCost,
+          } satisfies Prisma.JsonObject,
+        };
+      }
+
+      if (!item.quantity || item.quantity <= 0) {
+        throw new BadRequestException('Quantity must be a positive number');
+      }
+      const quantity = Math.round(item.quantity * 100) / 100;
+      return {
+        quantity,
+        rate: item.unitCost,
+        amount: Math.round(quantity * item.unitCost * 100) / 100,
+        inputParameters: null,
+      };
+    });
+
+    const itemAmounts = calculatedItems.map((item) => new Prisma.Decimal(item.amount));
     const subtotal = itemAmounts.reduce((sum, amount) => sum.plus(amount), ZERO);
-    const totalQuantity = dto.items.reduce((sum, item) => sum.plus(item.quantity), ZERO);
+    const totalQuantity = calculatedItems.reduce((sum, item) => sum.plus(item.quantity), ZERO);
 
     if (subtotal.isZero() && !freightCost.isZero()) {
       throw new BadRequestException('Cannot allocate freight/other costs when the goods subtotal is zero');
@@ -106,8 +166,9 @@ export class PurchasesService {
 
       for (let i = 0; i < dto.items.length; i++) {
         const item = dto.items[i];
+        const calculatedItem = calculatedItems[i];
         const amount = itemAmounts[i];
-        const quantity = new Prisma.Decimal(item.quantity);
+        const quantity = new Prisma.Decimal(calculatedItem.quantity);
 
         const shareBasis =
           freightAllocationMethod === FreightAllocationMethod.BY_QUANTITY
@@ -126,6 +187,9 @@ export class PurchasesService {
           data: {
             purchaseInvoiceId: invoice.id,
             productId: item.productId,
+            ...(calculatedItem.inputParameters
+              ? { inputParameters: calculatedItem.inputParameters }
+              : {}),
             quantity,
             unitCost: item.unitCost,
             amount,
