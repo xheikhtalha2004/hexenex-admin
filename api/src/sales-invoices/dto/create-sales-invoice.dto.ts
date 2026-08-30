@@ -57,6 +57,11 @@ export class CreateSalesInvoiceDto {
   discountAmount?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  advanceReceived?: number;
+
+  @IsOptional()
   @IsString()
   sourceQuotationId?: string;
 

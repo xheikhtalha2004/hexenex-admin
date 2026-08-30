@@ -1,9 +1,9 @@
 'use client';
 
 import { Fragment, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { apiClient, ApiError, openPdfInNewTab } from '@/lib/api-client';
 import { PermissionGate } from '@/components/permission-gate';
 import { useAuth } from '@/lib/auth-context';
@@ -15,8 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/searchable-select';
-import { ConfirmDialog } from '@/components/confirm-dialog';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface Customer {
   id: string;
@@ -30,10 +29,12 @@ interface Product {
   id: string;
   name: string;
 }
-interface InventoryBalance {
-  productId: string;
-  locationId: string;
-  quantity: string;
+interface ItemInputParameters {
+  description?: string;
+  sizeOption?: string;
+  quantity?: number;
+  width?: number;
+  length?: number;
 }
 interface SalesInvoiceItem {
   id: string;
@@ -41,6 +42,7 @@ interface SalesInvoiceItem {
   rate: string;
   amount: string;
   product: { name: string };
+  inputParameters?: ItemInputParameters;
 }
 interface SalesInvoice {
   id: string;
@@ -50,6 +52,7 @@ interface SalesInvoice {
   subtotal: string;
   discountAmount: string;
   totalAmount: string;
+  advanceReceived: string;
   termsText: string | null;
   cancelReason: string | null;
   customer: Customer;
@@ -108,12 +111,7 @@ function previewSqft(row: DraftItemRow): number | null {
   return Math.round(((quantity * width * length) / 144) * 100) / 100;
 }
 
-function isRowComplete(row: DraftItemRow): boolean {
-  if (!row.productId || !row.rate) return false;
-  return previewSqft(row) !== null;
-}
-
-function dimensionSummary(p: any): string {
+function dimensionSummary(p: ItemInputParameters): string {
   if (!p.sizeOption) return '—';
   if (p.sizeOption === 'SELF') return 'Sq ft entered directly';
   const width = p.width != null ? p.width : (p.sizeOption !== 'FIX' ? p.sizeOption : '?');
@@ -131,30 +129,22 @@ export default function SalesInvoicesPage() {
 function SalesInvoicesContent() {
   const { hasPermission } = useAuth();
   const canCreate = hasPermission('sales_invoice.create');
-  const canFinalize = hasPermission('sales_invoice.finalize');
-  const canCancel = hasPermission('sales_invoice.cancel');
   const queryClient = useQueryClient();
 
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [customerId, setCustomerId] = useState('');
   const [locationId, setLocationId] = useState('');
-  const [discountAmount, setDiscountAmount] = useState('0');
+  const [advanceReceived, setAdvanceReceived] = useState('0');
   const [termsText, setTermsText] = useState('');
   const [items, setItems] = useState<DraftItemRow[]>([newRow()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [confirmFinalizeId, setConfirmFinalizeId] = useState<string | null>(null);
-  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
-  const [cancelReason, setCancelReason] = useState('');
 
   const customersQuery = useQuery({ queryKey: ['customers-picker'], queryFn: () => apiClient.get<Customer[]>('/customers/picker') });
   const locationsQuery = useQuery({ queryKey: ['locations'], queryFn: () => apiClient.get<Location[]>('/locations') });
   const productsQuery = useQuery({ queryKey: ['products-picker'], queryFn: () => apiClient.get<Product[]>('/product-picker') });
-  const balancesQuery = useQuery({
-    queryKey: ['inventory-balances-for-invoice'],
-    queryFn: () => apiClient.get<InventoryBalance[]>('/inventory/balances'),
-  });
 
   // SIN-01: Factory is the default location on the create form until the user picks a
   // different one — derived at render time rather than synced via an effect, so there is
@@ -162,22 +152,12 @@ function SalesInvoicesContent() {
   const defaultFactoryLocation = locationsQuery.data?.find((l) => l.name.toLowerCase().includes('factory'));
   const effectiveLocationId = locationId || defaultFactoryLocation?.id || '';
 
-  // SIN-05: drafts and PDFs are allowed at zero/insufficient stock, but the operator should
-  // still clearly see the shortfall before finalizing — this looks up the live balance for a
-  // row's product at the chosen location without blocking anything.
-  function stockWarning(row: DraftItemRow): string | null {
-    if (!row.productId || !effectiveLocationId || !row.quantity) return null;
-    const balance = balancesQuery.data?.find((b) => b.productId === row.productId && b.locationId === effectiveLocationId);
-    const available = balance ? Number(balance.quantity) : 0;
-    const requested = Number(row.quantity);
-    if (requested > available) {
-      return `Only ${available.toLocaleString()} sq ft available at this location — this line can still be drafted, but finalizing will be blocked until stock is sufficient.`;
-    }
-    return null;
-  }
   const invoicesQuery = useQuery({
-    queryKey: ['sales-invoices', page],
-    queryFn: () => apiClient.get<Paginated<SalesInvoice>>(`/sales-invoices?page=${page}&pageSize=20`),
+    queryKey: ['sales-invoices', page, search],
+    queryFn: () =>
+      apiClient.get<Paginated<SalesInvoice>>(
+        `/sales-invoices?page=${page}&pageSize=20${search ? `&search=${encodeURIComponent(search)}` : ''}`,
+      ),
   });
 
   function updateItem(key: number, patch: Partial<DraftItemRow>) {
@@ -196,7 +176,7 @@ function SalesInvoicesContent() {
   function resetForm() {
     setCustomerId('');
     setLocationId('');
-    setDiscountAmount('0');
+    setAdvanceReceived('0');
     setTermsText('');
     setItems([newRow()]);
   }
@@ -205,29 +185,13 @@ function SalesInvoicesContent() {
     setFormOpen(true);
   }
 
-  const finalizeMutation = useMutation({
-    mutationFn: (id: string) => apiClient.post(`/sales-invoices/${id}/finalize`),
-    onSuccess: () => {
-      toast.success('Invoice finalized — stock deducted, customer ledger updated');
-      setConfirmFinalizeId(null);
-      queryClient.invalidateQueries({ queryKey: ['sales-invoices'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not finalize invoice'),
-  });
-
-  const cancelMutation = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason?: string }) => apiClient.post(`/sales-invoices/${id}/cancel`, { reason }),
-    onSuccess: () => {
-      toast.success('Invoice cancelled — stock and balance reversed');
-      setCancelTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['sales-invoices'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not cancel invoice'),
-  });
-
-  const finalizeTarget = invoicesQuery.data?.data.find((i) => i.id === confirmFinalizeId);
+  const invoiceSubtotal = items.reduce((sum, row) => {
+    const sqft = previewSqft(row);
+    const rate = Number(row.rate);
+    return sum + (sqft !== null && Number.isFinite(rate) ? sqft * rate : 0);
+  }, 0);
+  const invoiceAdvance = Math.max(0, Number(advanceReceived) || 0);
+  const invoiceRemaining = Math.max(0, invoiceSubtotal - invoiceAdvance);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -240,12 +204,17 @@ function SalesInvoicesContent() {
       toast.error('Add at least one item');
       return;
     }
+    if (invoiceAdvance > invoiceSubtotal) {
+      toast.error('Advance received cannot exceed the invoice total');
+      return;
+    }
     setIsSubmitting(true);
     try {
       await apiClient.post('/sales-invoices', {
         customerId,
         locationId: effectiveLocationId,
-        discountAmount: Number(discountAmount) || 0,
+        discountAmount: 0,
+        advanceReceived: invoiceAdvance,
         termsText: termsText || undefined,
         items: validItems.map((r) => ({
           productId: r.productId,
@@ -262,7 +231,7 @@ function SalesInvoicesContent() {
           rate: Number(r.rate),
         })),
       });
-      toast.success('Sales invoice created as draft');
+      toast.success('Sales invoice created and finalized');
       setFormOpen(false);
       resetForm();
       queryClient.invalidateQueries({ queryKey: ['sales-invoices'] });
@@ -278,9 +247,6 @@ function SalesInvoicesContent() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sales Invoices</h1>
-          <p className="text-muted-foreground">
-            Finalizing deducts stock and posts the customer ledger atomically. Cancelling a finalized invoice reverses both.
-          </p>
         </div>
         {canCreate && (
           <Button onClick={openNewInvoice} className="shrink-0">
@@ -315,7 +281,8 @@ function SalesInvoicesContent() {
                 <div className="space-y-2">
                   <Label>Location</Label>
                   <Select
-                    value={effectiveLocationId || null}
+                    items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
+                    value={effectiveLocationId || ''}
                     onValueChange={(v) => setLocationId(v ?? '')}
                   >
                     <SelectTrigger>
@@ -331,8 +298,15 @@ function SalesInvoicesContent() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="discountAmount">Discount</Label>
-                  <Input id="discountAmount" type="number" step="0.01" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} />
+                  <Label htmlFor="advanceReceived">Advance Received</Label>
+                  <Input
+                    id="advanceReceived"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={advanceReceived}
+                    onChange={(e) => setAdvanceReceived(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="termsText">Terms</Label>
@@ -481,9 +455,15 @@ function SalesInvoicesContent() {
                 </div>
               </div>
 
+              <div className="ml-auto w-full max-w-sm rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Total Amount</span><span className="font-mono">{invoiceSubtotal.toFixed(2)}</span></div>
+                <div className="mt-2 flex justify-between"><span className="text-muted-foreground">Advance Received</span><span className="font-mono">{invoiceAdvance.toFixed(2)}</span></div>
+                <div className="mt-3 flex justify-between border-t pt-3 font-semibold"><span>Remaining Amount</span><span className="font-mono">{invoiceRemaining.toFixed(2)}</span></div>
+              </div>
+
               <div className="flex gap-2">
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? 'Creating…' : 'Create draft'}
+                  {isSubmitting ? 'Creating…' : 'Create invoice'}
                 </Button>
                 <Button
                   type="button"
@@ -501,8 +481,20 @@ function SalesInvoicesContent() {
       </Dialog>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
           <CardTitle className="text-base">Invoices</CardTitle>
+          <div className="relative w-64">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search number or customer"
+              className="pl-8"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           {invoicesQuery.isLoading ? (
@@ -517,6 +509,8 @@ function SalesInvoicesContent() {
                     <TableHead>Customer</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Advance Received</TableHead>
+                    <TableHead className="text-right">Remaining Amount</TableHead>
                     <TableHead className="text-right">Delivery Order / Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -530,25 +524,11 @@ function SalesInvoicesContent() {
                           <TableCell>{inv.customer.name}</TableCell>
                           <TableCell>{inv.location.name}</TableCell>
                           <TableCell className="text-right font-mono">{Number(inv.totalAmount).toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{Number(inv.advanceReceived).toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">
+                            {Math.max(0, Number(inv.totalAmount) - Number(inv.advanceReceived)).toLocaleString()}
+                          </TableCell>
                           <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
-                            {inv.status === 'DRAFT' && canFinalize && (
-                              <Button size="sm" disabled={finalizeMutation.isPending} onClick={() => setConfirmFinalizeId(inv.id)}>
-                                Finalize
-                              </Button>
-                            )}
-                            {inv.status === 'FINALIZED' && canCancel && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={cancelMutation.isPending}
-                                onClick={() => {
-                                  setCancelReason('');
-                                  setCancelTarget(inv.id);
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            )}
                             <Button
                               size="sm"
                               variant="outline"
@@ -569,7 +549,7 @@ function SalesInvoicesContent() {
                         </TableRow>
                         {expandedId === inv.id && (
                           <TableRow>
-                            <TableCell colSpan={6} className="bg-muted/30">
+                            <TableCell colSpan={8} className="bg-muted/30">
                               <div className="text-sm space-y-1 py-2">
                                 {inv.termsText && <p className="text-muted-foreground">Terms: {inv.termsText}</p>}
                                 {inv.cancelReason && <p className="text-destructive">Cancelled: {inv.cancelReason}</p>}
@@ -586,7 +566,7 @@ function SalesInvoicesContent() {
                                     </TableHeader>
                                     <TableBody>
                                       {inv.items.map((item) => {
-                                        const p = (item as any).inputParameters || {};
+                                        const p = item.inputParameters ?? {};
                                         return (
                                           <TableRow key={item.id}>
                                             <TableCell>{item.product.name}</TableCell>
@@ -600,10 +580,11 @@ function SalesInvoicesContent() {
                                       })}
                                       <TableRow>
                                         <TableCell colSpan={5} className="text-right text-muted-foreground">
-                                        Subtotal / Discount
+                                        Total / Advance / Remaining
                                       </TableCell>
                                       <TableCell className="text-right font-mono">
-                                        {Number(inv.subtotal).toLocaleString()} / {Number(inv.discountAmount).toLocaleString()}
+                                        {Number(inv.totalAmount).toLocaleString()} / {Number(inv.advanceReceived).toLocaleString()} /{' '}
+                                        {Math.max(0, Number(inv.totalAmount) - Number(inv.advanceReceived)).toLocaleString()}
                                       </TableCell>
                                     </TableRow>
                                   </TableBody>
@@ -616,7 +597,7 @@ function SalesInvoicesContent() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                         No sales invoices yet.
                       </TableCell>
                     </TableRow>
@@ -643,44 +624,6 @@ function SalesInvoicesContent() {
         </CardContent>
       </Card>
 
-      <ConfirmDialog
-        open={!!confirmFinalizeId}
-        onOpenChange={(open) => !open && setConfirmFinalizeId(null)}
-        title="Finalize this sales invoice?"
-        description={
-          finalizeTarget ? (
-            <>
-              Invoice <strong>{finalizeTarget.invoiceNumber}</strong> for <strong>{finalizeTarget.customer.name}</strong> at{' '}
-              <strong>{finalizeTarget.location.name}</strong>, total <strong>{Number(finalizeTarget.totalAmount).toLocaleString()}</strong>.
-              This deducts stock and posts the customer ledger, and cannot be undone except through cancellation.
-            </>
-          ) : null
-        }
-        confirmLabel="Finalize"
-        isConfirming={finalizeMutation.isPending}
-        onConfirm={() => confirmFinalizeId && finalizeMutation.mutate(confirmFinalizeId)}
-      />
-
-      <ConfirmDialog
-        open={!!cancelTarget}
-        onOpenChange={(open) => !open && setCancelTarget(null)}
-        title="Cancel this finalized invoice?"
-        destructive
-        description={
-          <div className="space-y-3">
-            <p>This reverses the stock deduction and the customer ledger entry. This is an audited action — enter a reason.</p>
-            <Input
-              placeholder="Reason for cancellation"
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              autoFocus
-            />
-          </div>
-        }
-        confirmLabel="Cancel invoice"
-        isConfirming={cancelMutation.isPending}
-        onConfirm={() => cancelTarget && cancelMutation.mutate({ id: cancelTarget, reason: cancelReason || undefined })}
-      />
     </div>
   );
 }

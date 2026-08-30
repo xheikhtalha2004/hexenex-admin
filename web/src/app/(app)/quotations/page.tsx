@@ -39,7 +39,7 @@ interface QuotationItem {
   computedQuantity: string;
   computedRate: string;
   computedAmount: string;
-  product: { name: string };
+  product: { id: string; name: string };
   inputParameters: QuotationItemInputParameters;
 }
 interface Quotation {
@@ -51,6 +51,7 @@ interface Quotation {
   subtotal: string;
   discountAmount: string;
   totalAmount: string;
+  advanceReceived: string;
   notes: string | null;
   customer: Customer;
   items: QuotationItem[];
@@ -91,9 +92,9 @@ interface DraftItemRow {
 }
 
 let rowKeySeq = 0;
-function newRow(): DraftItemRow {
+function newRow(productId = ''): DraftItemRow {
   rowKeySeq += 1;
-  return { key: rowKeySeq, productId: '', description: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
+  return { key: rowKeySeq, productId, description: '', sizeOption: 'FIX', quantity: '', width: '', length: '', sqft: '', rate: '' };
 }
 
 /** Client-side mirror of the server formula, for a live preview only — the server remains
@@ -116,6 +117,18 @@ function isRowComplete(row: DraftItemRow): boolean {
   if (!row.productId || !row.rate) return false;
   return previewSqft(row) !== null;
 }
+
+function previewAmount(row: DraftItemRow): number | null {
+  const sqft = previewSqft(row);
+  const rate = Number(row.rate);
+  if (sqft === null || !Number.isFinite(rate) || rate <= 0) return null;
+  return sqft * rate;
+}
+
+function formatAmount(value: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 
 function dimensionSummary(p: QuotationItemInputParameters): string {
   if (!p.sizeOption) return '—';
@@ -148,7 +161,7 @@ function QuotationsContent() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState('');
-  const [discountAmount, setDiscountAmount] = useState('0');
+  const [advanceReceived, setAdvanceReceived] = useState('0');
   const [notes, setNotes] = useState('');
   const [validUntil, setValidUntil] = useState('');
   const [items, setItems] = useState<DraftItemRow[]>([newRow()]);
@@ -166,6 +179,8 @@ function QuotationsContent() {
   const customersQuery = useQuery({ queryKey: ['customers-picker'], queryFn: () => apiClient.get<Customer[]>('/customers/picker') });
   const productsQuery = useQuery({ queryKey: ['products-picker'], queryFn: () => apiClient.get<Product[]>('/product-picker') });
   const locationsQuery = useQuery({ queryKey: ['locations'], queryFn: () => apiClient.get<{ id: string; name: string }[]>('/locations') });
+  const defaultFactoryLocation = locationsQuery.data?.find((location) => location.name.toLowerCase().includes('factory'));
+  const effectiveConvertLocationId = convertLocationId || defaultFactoryLocation?.id || '';
   const quotationsQuery = useQuery({
     queryKey: ['quotations', page, search],
     queryFn: () =>
@@ -178,7 +193,7 @@ function QuotationsContent() {
     mutationFn: ({ id, locationId }: { id: string; locationId: string }) =>
       apiClient.post(`/sales-invoices/from-quotation/${id}`, { locationId }),
     onSuccess: () => {
-      toast.success('Converted to a draft sales invoice — review it under Sales Invoices before finalizing');
+      toast.success('Converted to a finalized sales invoice');
       setConvertingId(null);
       setConvertLocationId('');
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
@@ -188,11 +203,18 @@ function QuotationsContent() {
 
   function updateItem(key: number, patch: Partial<DraftItemRow>) {
     setItems((rows) => {
-      const next = rows.map((r) => (r.key === key ? { ...r, ...patch } : r));
-      // Grid-style entry: as soon as the last row has a product on it, silently append a
-      // fresh blank row underneath so there is never a need to click "Add item" by hand.
-      const last = next[next.length - 1];
-      if (last.productId) return [...next, newRow()];
+      const next = rows.map((row) => (row.key === key ? { ...row, ...patch } : row));
+      const editedIndex = next.findIndex((row) => row.key === key);
+      const editedRow = next[editedIndex];
+      const editedLastRow = editedIndex === next.length - 1;
+
+      if (
+        editedLastRow &&
+        editedRow.productId &&
+        (patch.productId !== undefined || isRowComplete(editedRow))
+      ) {
+        return [...next, newRow(editedRow.productId)];
+      }
       return next;
     });
   }
@@ -202,7 +224,7 @@ function QuotationsContent() {
   function resetForm() {
     setEditingId(null);
     setCustomerId('');
-    setDiscountAmount('0');
+    setAdvanceReceived('0');
     setNotes('');
     setValidUntil('');
     setItems([newRow()]);
@@ -214,7 +236,7 @@ function QuotationsContent() {
   function startEdit(q: Quotation) {
     setEditingId(q.id);
     setCustomerId(q.customer.id);
-    setDiscountAmount(q.discountAmount);
+    setAdvanceReceived(q.advanceReceived);
     setNotes(q.notes ?? '');
     setValidUntil(q.validUntil ? q.validUntil.slice(0, 10) : '');
     setItems(
@@ -223,7 +245,7 @@ function QuotationsContent() {
         const p = item.inputParameters;
         return {
           key: rowKeySeq,
-          productId: '',
+          productId: item.product.id,
           description: p.description ?? '',
           sizeOption: p.sizeOption ?? 'FIX',
           quantity: p.quantity != null ? String(p.quantity) : '',
@@ -308,9 +330,15 @@ function QuotationsContent() {
       return;
     }
     setIsSubmitting(true);
+    if ((Number(advanceReceived) || 0) > quotationTotal) {
+      toast.error('Advance received cannot exceed the total amount');
+      setIsSubmitting(false);
+      return;
+    }
     const payload = {
       customerId,
-      discountAmount: Number(discountAmount) || 0,
+      discountAmount: 0,
+      advanceReceived: Number(advanceReceived) || 0,
       notes: notes || undefined,
       validUntil: validUntil || undefined,
       items: validItems.map((r) => ({
@@ -341,6 +369,11 @@ function QuotationsContent() {
       setIsSubmitting(false);
     }
   }
+
+  const quotationSubtotal = items.reduce((total, row) => total + (previewAmount(row) ?? 0), 0);
+  const quotationTotal = quotationSubtotal;
+  const quotationAdvance = Math.max(0, Number(advanceReceived) || 0);
+  const quotationRemaining = Math.max(0, quotationTotal - quotationAdvance);
 
   return (
     <div className="flex flex-col gap-6">
@@ -389,8 +422,16 @@ function QuotationsContent() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="discountAmount">Discount</Label>
-                <Input id="discountAmount" type="number" step="0.01" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} />
+                <Label htmlFor="advanceReceived">Advance Received</Label>
+                <Input
+                  id="advanceReceived"
+                  type="number"
+                  min="0"
+                  max={quotationTotal || undefined}
+                  step="0.01"
+                  value={advanceReceived}
+                  onChange={(e) => setAdvanceReceived(e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="validUntil">Valid until</Label>
@@ -411,28 +452,41 @@ function QuotationsContent() {
             <div className="space-y-2">
               <Label>Items</Label>
               <div className="overflow-x-auto rounded-lg border border-border/70">
-                <table className="w-full text-sm min-w-[1000px]">
+                <table className="w-full text-sm min-w-[1080px]">
                   <thead>
                     <tr className="border-b bg-muted/40 text-xs text-muted-foreground divide-x divide-border/50">
-                      <th className="w-[20%] px-2 py-1.5 text-left font-medium">Product</th>
+                      <th className="w-[7%] px-2 py-1.5 text-left font-medium">Quantity</th>
+                      <th className="w-[18%] px-2 py-1.5 text-left font-medium">Product</th>
                       <th className="w-[12%] px-2 py-1.5 text-left font-medium">Description</th>
-                      <th className="w-[12%] px-2 py-1.5 text-left font-medium">Size</th>
-                      <th className="w-[8%] px-2 py-1.5 text-left font-medium">Qty</th>
-                      <th className="w-[9%] px-2 py-1.5 text-left font-medium">W</th>
-                      <th className="w-[9%] px-2 py-1.5 text-left font-medium">L</th>
-                      <th className="w-[9%] px-2 py-1.5 text-left font-medium">Rate</th>
-                      <th className="w-[9%] px-2 py-1.5 text-right font-medium">Result</th>
-                      <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount</th>
+                      <th className="w-[13%] px-2 py-1.5 text-left font-medium">Size Formula</th>
+                      <th className="w-[8%] px-2 py-1.5 text-left font-medium">Width</th>
+                      <th className="w-[8%] px-2 py-1.5 text-left font-medium">Length</th>
+                      <th className="w-[8%] px-2 py-1.5 text-left font-medium">Rate</th>
+                      <th className="w-[11%] px-2 py-1.5 text-right font-medium">Total Square Feet</th>
+                      <th className="w-[11%] px-2 py-1.5 text-right font-medium">Amount or Price</th>
                       <th className="w-8" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
                     {items.map((row, idx) => {
                       const sqft = previewSqft(row);
-                      const amount = sqft !== null && row.rate ? sqft * Number(row.rate) : null;
+                      const amount = previewAmount(row);
                       const isLastBlankRow = idx === items.length - 1 && !row.productId;
                       return (
                         <tr key={row.key} className="divide-x divide-border/50">
+                          <td className="p-0 align-top">
+                            {row.sizeOption === 'SELF' ? (
+                              <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                            ) : (
+                              <Input
+                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                type="number"
+                                step="1"
+                                value={row.quantity}
+                                onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
+                              />
+                            )}
+                          </td>
                           <td className="p-0 align-top">
                             <SearchableSelect
                               items={(productsQuery.data ?? []).map(p => ({ value: p.id, label: p.name }))}
@@ -470,49 +524,33 @@ function QuotationsContent() {
                               </SelectContent>
                             </Select>
                           </td>
-                          {row.sizeOption === 'SELF' ? (
-                            <td className="p-0 align-top" colSpan={3}>
+                          <td className="p-0 align-top">
+                            {row.sizeOption === 'SELF' ? (
+                              <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                            ) : (
                               <Input
                                 className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
                                 type="number"
                                 step="0.01"
-                                placeholder="Sq ft"
-                                value={row.sqft}
-                                onChange={(e) => updateItem(row.key, { sqft: e.target.value })}
+                                value={row.width}
+                                placeholder={row.sizeOption !== 'FIX' ? row.sizeOption : undefined}
+                                onChange={(e) => updateItem(row.key, { width: e.target.value })}
                               />
-                            </td>
-                          ) : (
-                            <>
-                              <td className="p-0 align-top">
-                                <Input
+                            )}
+                          </td>
+                          <td className="p-0 align-top">
+                            {row.sizeOption === 'SELF' ? (
+                              <div className="px-2 py-1.5 text-muted-foreground">—</div>
+                            ) : (
+                              <Input
                                 className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                  type="number"
-                                  step="1"
-                                  value={row.quantity}
-                                  onChange={(e) => updateItem(row.key, { quantity: e.target.value })}
-                                />
-                              </td>
-                              <td className="p-0 align-top">
-                                <Input
-                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                  type="number"
-                                  step="0.01"
-                                  value={row.width}
-                                  placeholder={row.sizeOption !== 'FIX' ? row.sizeOption : undefined}
-                                  onChange={(e) => updateItem(row.key, { width: e.target.value })}
-                                />
-                              </td>
-                              <td className="p-0 align-top">
-                                <Input
-                                className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
-                                  type="number"
-                                  step="0.01"
-                                  value={row.length}
-                                  onChange={(e) => updateItem(row.key, { length: e.target.value })}
-                                />
-                              </td>
-                            </>
-                          )}
+                                type="number"
+                                step="0.01"
+                                value={row.length}
+                                onChange={(e) => updateItem(row.key, { length: e.target.value })}
+                              />
+                            )}
+                          </td>
                           <td className="p-0 align-top">
                             <Input
                                 className="h-8 text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
@@ -522,7 +560,20 @@ function QuotationsContent() {
                               onChange={(e) => updateItem(row.key, { rate: e.target.value })}
                             />
                           </td>
-                          <td className="px-2 py-1.5 align-top text-right font-mono">{sqft !== null ? sqft.toLocaleString() : '—'}</td>
+                          <td className="p-0 align-top text-right font-mono">
+                            {row.sizeOption === 'SELF' ? (
+                              <Input
+                                className="h-8 text-right font-mono text-sm rounded-none border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-inset px-2"
+                                type="number"
+                                step="0.01"
+                                placeholder="Sq ft"
+                                value={row.sqft}
+                                onChange={(e) => updateItem(row.key, { sqft: e.target.value })}
+                              />
+                            ) : (
+                              <div className="px-2 py-1.5">{sqft !== null ? sqft.toLocaleString() : '—'}</div>
+                            )}
+                          </td>
                           <td className="px-2 py-1.5 align-top text-right font-mono">{amount !== null ? amount.toLocaleString() : '—'}</td>
                           <td className="p-0 align-top">
                             {!isLastBlankRow && (
@@ -543,6 +594,25 @@ function QuotationsContent() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            <div className="ml-auto w-full max-w-sm rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+              <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                <span>Subtotal</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationSubtotal)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                <span>Total Amount</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationTotal)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+                <span>Advance Received</span>
+                <span className="font-mono text-foreground">{formatAmount(quotationAdvance)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-4 border-t border-border/70 pt-2 text-base font-semibold">
+                <span>Remaining Amount</span>
+                <span className="font-mono">{formatAmount(quotationRemaining)}</span>
               </div>
             </div>
 
@@ -679,8 +749,9 @@ function QuotationsContent() {
                               <Button
                                 size="sm"
                                 onClick={() => {
-                                  setConvertingId(convertingId === q.id ? null : q.id);
-                                  setConvertLocationId('');
+                                  const nextConvertingId = convertingId === q.id ? null : q.id;
+                                  setConvertingId(nextConvertingId);
+                                  setConvertLocationId(nextConvertingId ? defaultFactoryLocation?.id ?? '' : '');
                                 }}
                               >
                                 Convert to Invoice
@@ -702,7 +773,8 @@ function QuotationsContent() {
                                 <div className="space-y-2 w-56">
                                   <Label>Receiving/selling location</Label>
                                   <Select
-                                    value={convertLocationId || null}
+                                    items={Object.fromEntries((locationsQuery.data ?? []).map((location) => [location.id, location.name]))}
+                                    value={effectiveConvertLocationId}
                                     onValueChange={(v) => setConvertLocationId(v ?? '')}
                                   >
                                     <SelectTrigger>
@@ -719,8 +791,8 @@ function QuotationsContent() {
                                 </div>
                                 <Button
                                   size="sm"
-                                  disabled={!convertLocationId || convertMutation.isPending}
-                                  onClick={() => convertMutation.mutate({ id: q.id, locationId: convertLocationId })}
+                                  disabled={!effectiveConvertLocationId || convertMutation.isPending}
+                                  onClick={() => convertMutation.mutate({ id: q.id, locationId: effectiveConvertLocationId })}
                                 >
                                   Confirm conversion
                                 </Button>
@@ -762,11 +834,17 @@ function QuotationsContent() {
                                       </TableRow>
                                     ))}
                                     <TableRow>
-                                      <TableCell colSpan={4} className="text-right text-muted-foreground">
-                                        Subtotal / Discount
-                                      </TableCell>
-                                      <TableCell className="text-right font-mono">
-                                        {Number(q.subtotal).toLocaleString()} / {Number(q.discountAmount).toLocaleString()}
+                                      <TableCell colSpan={4} className="text-right text-muted-foreground">Subtotal</TableCell>
+                                      <TableCell className="text-right font-mono">{formatAmount(Number(q.subtotal))}</TableCell>
+                                    </TableRow>
+                                    <TableRow>
+                                      <TableCell colSpan={4} className="text-right text-muted-foreground">Advance Received</TableCell>
+                                      <TableCell className="text-right font-mono">{formatAmount(Number(q.advanceReceived))}</TableCell>
+                                    </TableRow>
+                                    <TableRow>
+                                      <TableCell colSpan={4} className="text-right font-semibold">Remaining Amount</TableCell>
+                                      <TableCell className="text-right font-mono font-semibold">
+                                        {formatAmount(Math.max(0, Number(q.totalAmount) - Number(q.advanceReceived)))}
                                       </TableCell>
                                     </TableRow>
                                   </TableBody>

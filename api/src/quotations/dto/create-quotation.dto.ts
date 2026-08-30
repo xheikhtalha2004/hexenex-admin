@@ -82,6 +82,11 @@ export class CreateQuotationDto {
   @Min(0)
   discountAmount?: number;
 
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  advanceReceived?: number;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

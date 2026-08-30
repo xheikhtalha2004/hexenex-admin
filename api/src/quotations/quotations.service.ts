@@ -107,7 +107,9 @@ export class QuotationsService {
     const subtotal = computed.reduce((sum, c) => sum + c.result.amount, 0);
     const discountAmount = dto.discountAmount ?? 0;
     const totalAmount = subtotal - discountAmount;
+    const advanceReceived = dto.advanceReceived ?? 0;
     if (totalAmount < 0) throw new BadRequestException('Discount cannot exceed the subtotal');
+    if (advanceReceived > totalAmount) throw new BadRequestException('Advance received cannot exceed the total amount');
 
     return this.prisma.$transaction(async (tx) => {
       await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
@@ -122,6 +124,7 @@ export class QuotationsService {
           subtotal,
           discountAmount,
           totalAmount,
+          advanceReceived,
           validUntil: dto.validUntil,
           notes: dto.notes,
           createdByUserId: actorId,
@@ -163,7 +166,9 @@ export class QuotationsService {
     const subtotal = computed.reduce((sum, c) => sum + c.result.amount, 0);
     const discountAmount = dto.discountAmount ?? 0;
     const totalAmount = subtotal - discountAmount;
+    const advanceReceived = dto.advanceReceived ?? 0;
     if (totalAmount < 0) throw new BadRequestException('Discount cannot exceed the subtotal');
+    if (advanceReceived > totalAmount) throw new BadRequestException('Advance received cannot exceed the total amount');
 
     return this.prisma.$transaction(async (tx) => {
       await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
@@ -178,6 +183,7 @@ export class QuotationsService {
           subtotal,
           discountAmount,
           totalAmount,
+          advanceReceived,
           validUntil: dto.validUntil,
           notes: dto.notes,
         },

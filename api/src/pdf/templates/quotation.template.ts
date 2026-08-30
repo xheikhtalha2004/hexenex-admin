@@ -38,6 +38,7 @@ interface QuotationForTemplate {
   subtotal: Money;
   discountAmount: Money;
   totalAmount: Money;
+  advanceReceived?: Money;
   customer: { name: string };
   items: QuotationItemForTemplate[];
 }
@@ -47,22 +48,20 @@ export function quotationHtml(
   company: CompanySettingsForTemplate,
 ): string {
   const columns = [
-    { header: 'SN', align: 'center' as const },
-    { header: 'Product & Description' },
-    { header: 'Size' },
-    { header: 'Qty', align: 'right' as const },
-    { header: 'W (in)', align: 'right' as const },
-    { header: 'L (in)', align: 'right' as const },
+    { header: 'Quantity', align: 'right' as const },
+    { header: 'Product' },
+    { header: 'Description' },
+    { header: 'Width', align: 'right' as const },
+    { header: 'Length', align: 'right' as const },
     { header: 'Rate', align: 'right' as const },
-    { header: 'Sq Ft', align: 'right' as const },
-    { header: 'Amount', align: 'right' as const },
+    { header: 'Total Square Feet', align: 'right' as const },
+    { header: 'Amount or Price', align: 'right' as const },
   ];
 
-  const rows = quotation.items.map((item, i) => {
+  const rows = quotation.items.map((item) => {
     const p = item.inputParameters as Record<string, unknown> | undefined;
     const sizeOption = typeof p?.sizeOption === 'string' ? p.sizeOption : '';
     const desc = p && typeof p.description === 'string' ? p.description : '';
-    const productCol = desc ? `${esc(item.product.name)}<br/><span style="font-size:8.5px;color:#555;">${esc(desc)}</span>` : esc(item.product.name);
     
     let w = '?';
     let l = '?';
@@ -78,10 +77,9 @@ export function quotationHtml(
     }
     
     return [
-      String(i + 1),
-      productCol,
-      esc(sizeOption === 'FIX' ? 'Fix (custom width)' : sizeOption === 'SELF' ? 'Self (entered sqft directly)' : sizeOption + ' in (standard)'),
       qty,
+      esc(item.product.name),
+      desc ? esc(desc) : '-',
       w,
       l,
       formatMoney(item.computedRate),
@@ -90,13 +88,17 @@ export function quotationHtml(
     ];
   });
 
+  const advanceReceived = Number(quotation.advanceReceived ?? 0);
+  const remainingAmount = Math.max(0, Number(quotation.totalAmount) - advanceReceived);
+
   const bodyHtml = `
     <div class="section-label">Items</div>
     ${customTableHtml(columns, rows)}
     ${totalsHtml([
       { label: 'Subtotal', value: quotation.subtotal, emphasis: 'muted' },
-      { label: 'Discount', value: quotation.discountAmount, emphasis: 'muted' },
-      { label: 'Total', value: quotation.totalAmount, emphasis: 'grand' },
+      { label: 'Total Amount', value: quotation.totalAmount },
+      { label: 'Advance Received', value: advanceReceived, emphasis: 'muted' },
+      { label: 'Remaining Amount', value: remainingAmount, emphasis: 'grand' },
     ])}
     ${quotation.notes ? `<div class="notes"><div class="block"><div class="heading">Notes</div><div>${esc(quotation.notes)}</div></div></div>` : ''}
   `;

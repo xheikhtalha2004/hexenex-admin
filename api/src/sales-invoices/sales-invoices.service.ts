@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   CustomerLedgerEntryType,
   DocumentType,
@@ -15,6 +20,7 @@ import { AuditService } from '../audit/audit.service';
 import { TransactionsService } from '../transactions/transactions.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { CostingStrategyRegistry } from '../costing/costing-strategy.registry';
+import { CostingStrategy } from '../costing/costing-strategy.interface';
 import { CompanySettingsService } from '../company-settings/company-settings.service';
 import { CustomerLedgerService } from '../customer-ledger/customer-ledger.service';
 import { paginate } from '../common/pagination.dto';
@@ -30,6 +36,10 @@ const INCLUDE = {
   location: true,
   items: { include: { product: true }, orderBy: { sortOrder: 'asc' as const } },
 };
+
+type InvoiceWithItems = Prisma.SalesInvoiceGetPayload<{
+  include: { items: true };
+}>;
 
 @Injectable()
 export class SalesInvoicesService {
@@ -49,7 +59,17 @@ export class SalesInvoicesService {
     const where: Prisma.SalesInvoiceWhereInput = {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(query.dateFrom || query.dateTo ? { invoiceDate: { gte: query.dateFrom, lte: query.dateTo } } : {}),
+      ...(query.dateFrom || query.dateTo
+        ? { invoiceDate: { gte: query.dateFrom, lte: query.dateTo } }
+        : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { invoiceNumber: { contains: query.search, mode: 'insensitive' } },
+              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
     };
 
     const [data, total] = await Promise.all([
@@ -67,23 +87,43 @@ export class SalesInvoicesService {
   }
 
   async findOrThrow(id: string) {
-    const invoice = await this.prisma.salesInvoice.findUnique({ where: { id }, include: INCLUDE });
+    const invoice = await this.prisma.salesInvoice.findUnique({
+      where: { id },
+      include: INCLUDE,
+    });
     if (!invoice) throw new NotFoundException('Sales invoice not found');
     return invoice;
   }
 
   async create(dto: CreateSalesInvoiceDto, actorId: string) {
-    const itemAmounts = dto.items.map((item) => new Prisma.Decimal(item.quantity).times(item.rate));
-    const subtotal = itemAmounts.reduce((sum, amount) => sum.plus(amount), ZERO);
+    const itemAmounts = dto.items.map((item) =>
+      new Prisma.Decimal(item.quantity).times(item.rate),
+    );
+    const subtotal = itemAmounts.reduce(
+      (sum, amount) => sum.plus(amount),
+      ZERO,
+    );
     const discountAmount = new Prisma.Decimal(dto.discountAmount ?? 0);
     const totalAmount = subtotal.minus(discountAmount);
-    if (totalAmount.isNegative()) throw new BadRequestException('Discount cannot exceed the subtotal');
+    if (totalAmount.isNegative())
+      throw new BadRequestException('Discount cannot exceed the subtotal');
+    const advanceReceived = new Prisma.Decimal(dto.advanceReceived ?? 0);
+    if (advanceReceived.greaterThan(totalAmount)) {
+      throw new BadRequestException(
+        'Advance received cannot exceed the invoice total',
+      );
+    }
+    const settings = await this.companySettings.get();
+    const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
       await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
       await tx.location.findUniqueOrThrow({ where: { id: dto.locationId } });
 
-      const invoiceNumber = await this.numbering.nextNumber(tx, DocumentType.SALES_INVOICE);
+      const invoiceNumber = await this.numbering.nextNumber(
+        tx,
+        DocumentType.SALES_INVOICE,
+      );
       const invoice = await tx.salesInvoice.create({
         data: {
           invoiceNumber,
@@ -98,6 +138,7 @@ export class SalesInvoicesService {
           subtotal,
           discountAmount,
           totalAmount,
+          advanceReceived,
           createdByUserId: actorId,
         },
       });
@@ -118,32 +159,67 @@ export class SalesInvoicesService {
       }
 
       await this.audit.log(
-        { userId: actorId, action: 'CREATE', entityType: 'SalesInvoice', entityId: invoice.id, afterData: { ...invoice, items: dto.items } },
+        {
+          userId: actorId,
+          action: 'CREATE',
+          entityType: 'SalesInvoice',
+          entityId: invoice.id,
+          afterData: { ...invoice, items: dto.items },
+        },
         tx,
       );
 
-      return tx.salesInvoice.findUniqueOrThrow({ where: { id: invoice.id }, include: INCLUDE });
+      const invoiceWithItems = await tx.salesInvoice.findUniqueOrThrow({
+        where: { id: invoice.id },
+        include: { items: true },
+      });
+      return this.finalizeInTransaction(
+        tx,
+        invoiceWithItems,
+        actorId,
+        settings,
+        strategy,
+      );
     });
   }
 
   /**
-   * The manual quotation -> invoice step from the master spec: never automatic, always
-   * requires an already-APPROVED quotation, and always lands as a DRAFT invoice so staff can
-   * still review/edit before finalizing (finalize is what actually touches stock/ledger).
+   * Conversion requires an approved quotation and creates the invoice plus all stock and
+   * ledger postings in one transaction. The resulting invoice is already finalized.
    */
-  async createFromQuotation(quotationId: string, dto: CreateFromQuotationDto, actorId: string) {
+  async createFromQuotation(
+    quotationId: string,
+    dto: CreateFromQuotationDto,
+    actorId: string,
+  ) {
+    const settings = await this.companySettings.get();
+    const strategy = await this.costingRegistry.resolve();
+
     return this.prisma.$transaction(async (tx) => {
-      const quotation = await tx.quotation.findUnique({ where: { id: quotationId }, include: { items: true } });
+      const quotation = await tx.quotation.findUnique({
+        where: { id: quotationId },
+        include: { items: true },
+      });
       if (!quotation) throw new NotFoundException('Quotation not found');
       if (quotation.status !== QuotationStatus.APPROVED) {
-        throw new ConflictException('Only an approved quotation can be converted to a sales invoice');
+        throw new ConflictException(
+          'Only an approved quotation can be converted to a sales invoice',
+        );
       }
-      const existing = await tx.salesInvoice.findUnique({ where: { sourceQuotationId: quotationId } });
-      if (existing) throw new ConflictException('This quotation has already been converted to a sales invoice');
+      const existing = await tx.salesInvoice.findUnique({
+        where: { sourceQuotationId: quotationId },
+      });
+      if (existing)
+        throw new ConflictException(
+          'This quotation has already been converted to a sales invoice',
+        );
 
       await tx.location.findUniqueOrThrow({ where: { id: dto.locationId } });
 
-      const invoiceNumber = await this.numbering.nextNumber(tx, DocumentType.SALES_INVOICE);
+      const invoiceNumber = await this.numbering.nextNumber(
+        tx,
+        DocumentType.SALES_INVOICE,
+      );
       const invoice = await tx.salesInvoice.create({
         data: {
           invoiceNumber,
@@ -158,6 +234,7 @@ export class SalesInvoicesService {
           subtotal: quotation.subtotal,
           discountAmount: quotation.discountAmount,
           totalAmount: quotation.totalAmount,
+          advanceReceived: quotation.advanceReceived,
           createdByUserId: actorId,
         },
       });
@@ -177,18 +254,43 @@ export class SalesInvoicesService {
         });
       }
 
-      await tx.quotation.update({ where: { id: quotationId }, data: { status: QuotationStatus.CONVERTED } });
+      await tx.quotation.update({
+        where: { id: quotationId },
+        data: { status: QuotationStatus.CONVERTED },
+      });
 
       await this.audit.log(
-        { userId: actorId, action: 'CONVERT', entityType: 'Quotation', entityId: quotationId, afterData: { convertedToSalesInvoiceId: invoice.id } },
+        {
+          userId: actorId,
+          action: 'CONVERT',
+          entityType: 'Quotation',
+          entityId: quotationId,
+          afterData: { convertedToSalesInvoiceId: invoice.id },
+        },
         tx,
       );
       await this.audit.log(
-        { userId: actorId, action: 'CREATE', entityType: 'SalesInvoice', entityId: invoice.id, afterData: { ...invoice, sourceQuotationId: quotationId } },
+        {
+          userId: actorId,
+          action: 'CREATE',
+          entityType: 'SalesInvoice',
+          entityId: invoice.id,
+          afterData: { ...invoice, sourceQuotationId: quotationId },
+        },
         tx,
       );
 
-      return tx.salesInvoice.findUniqueOrThrow({ where: { id: invoice.id }, include: INCLUDE });
+      const invoiceWithItems = await tx.salesInvoice.findUniqueOrThrow({
+        where: { id: invoice.id },
+        include: { items: true },
+      });
+      return this.finalizeInTransaction(
+        tx,
+        invoiceWithItems,
+        actorId,
+        settings,
+        strategy,
+      );
     });
   }
 
@@ -198,11 +300,23 @@ export class SalesInvoicesService {
       throw new ConflictException('Only draft sales invoices can be edited');
     }
 
-    const itemAmounts = dto.items.map((item) => new Prisma.Decimal(item.quantity).times(item.rate));
-    const subtotal = itemAmounts.reduce((sum, amount) => sum.plus(amount), ZERO);
+    const itemAmounts = dto.items.map((item) =>
+      new Prisma.Decimal(item.quantity).times(item.rate),
+    );
+    const subtotal = itemAmounts.reduce(
+      (sum, amount) => sum.plus(amount),
+      ZERO,
+    );
     const discountAmount = new Prisma.Decimal(dto.discountAmount ?? 0);
     const totalAmount = subtotal.minus(discountAmount);
-    if (totalAmount.isNegative()) throw new BadRequestException('Discount cannot exceed the subtotal');
+    if (totalAmount.isNegative())
+      throw new BadRequestException('Discount cannot exceed the subtotal');
+    const advanceReceived = new Prisma.Decimal(dto.advanceReceived ?? 0);
+    if (advanceReceived.greaterThan(totalAmount)) {
+      throw new BadRequestException(
+        'Advance received cannot exceed the invoice total',
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await tx.customer.findUniqueOrThrow({ where: { id: dto.customerId } });
@@ -221,6 +335,7 @@ export class SalesInvoicesService {
           subtotal,
           discountAmount,
           totalAmount,
+          advanceReceived,
         },
       });
 
@@ -240,11 +355,21 @@ export class SalesInvoicesService {
       }
 
       await this.audit.log(
-        { userId: actorId, action: 'UPDATE', entityType: 'SalesInvoice', entityId: id, beforeData: existing, afterData: { ...updated, items: dto.items } },
+        {
+          userId: actorId,
+          action: 'UPDATE',
+          entityType: 'SalesInvoice',
+          entityId: id,
+          beforeData: existing,
+          afterData: { ...updated, items: dto.items },
+        },
         tx,
       );
 
-      return tx.salesInvoice.findUniqueOrThrow({ where: { id }, include: INCLUDE });
+      return tx.salesInvoice.findUniqueOrThrow({
+        where: { id },
+        include: INCLUDE,
+      });
     });
   }
 
@@ -253,99 +378,156 @@ export class SalesInvoicesService {
     const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.salesInvoice.findUnique({ where: { id }, include: { items: true } });
+      const invoice = await tx.salesInvoice.findUnique({
+        where: { id },
+        include: { items: true },
+      });
       if (!invoice) throw new NotFoundException('Sales invoice not found');
       if (invoice.status !== SalesInvoiceStatus.DRAFT) {
-        throw new ConflictException(`Sales invoice is already ${invoice.status.toLowerCase()}`);
+        throw new ConflictException(
+          `Sales invoice is already ${invoice.status.toLowerCase()}`,
+        );
       }
 
-      for (const item of invoice.items) {
-        const balance = await tx.inventoryBalance.findUnique({
-          where: { productId_locationId: { productId: item.productId, locationId: invoice.locationId } },
-        });
-        const currentQty = balance?.quantity ?? ZERO;
-        if (settings.stockShortagePolicy === StockShortagePolicy.PREVENT_NEGATIVE && currentQty.lessThan(item.quantity)) {
-          throw new BadRequestException(`Insufficient stock for product ${item.productId} at this location`);
-        }
+      return this.finalizeInTransaction(
+        tx,
+        invoice,
+        actorId,
+        settings,
+        strategy,
+      );
+    });
+  }
 
-        const { unitCost } = await strategy.recordConsumption(tx, {
-          productId: item.productId,
-          locationId: invoice.locationId,
-          quantity: item.quantity,
-        });
-
-        await tx.inventoryMovement.create({
-          data: {
+  private async finalizeInTransaction(
+    tx: Prisma.TransactionClient,
+    invoice: InvoiceWithItems,
+    actorId: string,
+    settings: { stockShortagePolicy: StockShortagePolicy },
+    strategy: CostingStrategy,
+  ) {
+    for (const item of invoice.items) {
+      const balance = await tx.inventoryBalance.findUnique({
+        where: {
+          productId_locationId: {
             productId: item.productId,
             locationId: invoice.locationId,
-            movementType: MovementType.SALE,
-            quantity: item.quantity.negated(),
-            unitCost,
-            movementDate: invoice.invoiceDate,
-            sourceType: MovementSourceType.SALES_INVOICE,
-            salesInvoiceItemId: item.id,
-            createdByUserId: actorId,
           },
-        });
-
-        await tx.inventoryBalance.upsert({
-          where: { productId_locationId: { productId: item.productId, locationId: invoice.locationId } },
-          create: { productId: item.productId, locationId: invoice.locationId, quantity: item.quantity.negated() },
-          update: { quantity: { decrement: item.quantity } },
-        });
+        },
+      });
+      const currentQty = balance?.quantity ?? ZERO;
+      if (
+        settings.stockShortagePolicy === StockShortagePolicy.PREVENT_NEGATIVE &&
+        currentQty.lessThan(item.quantity)
+      ) {
+        throw new BadRequestException(
+          `Insufficient stock for product ${item.productId} at this location`,
+        );
       }
 
-      await this.customerLedger.postEntry(tx, {
-        customerId: invoice.customerId,
-        entryType: CustomerLedgerEntryType.INVOICE,
-        amount: invoice.totalAmount,
-        salesInvoiceId: invoice.id,
-        description: `Sales invoice ${invoice.invoiceNumber}`,
-        entryDate: invoice.invoiceDate,
-        createdByUserId: actorId,
+      const { unitCost } = await strategy.recordConsumption(tx, {
+        productId: item.productId,
+        locationId: invoice.locationId,
+        quantity: item.quantity,
       });
 
-      await this.transactions.record(tx, {
-        transactionType: TransactionType.SALES_INVOICE,
-        amount: invoice.totalAmount,
-        description: `Sales invoice ${invoice.invoiceNumber}`,
-        referenceType: 'SalesInvoice',
-        referenceId: invoice.id,
-        customerId: invoice.customerId,
-        createdByUserId: actorId,
-        transactionDate: invoice.invoiceDate,
+      await tx.inventoryMovement.create({
+        data: {
+          productId: item.productId,
+          locationId: invoice.locationId,
+          movementType: MovementType.SALE,
+          quantity: item.quantity.negated(),
+          unitCost,
+          movementDate: invoice.invoiceDate,
+          sourceType: MovementSourceType.SALES_INVOICE,
+          salesInvoiceItemId: item.id,
+          createdByUserId: actorId,
+        },
       });
 
-      const finalized = await tx.salesInvoice.update({
-        where: { id: invoice.id },
-        data: { status: SalesInvoiceStatus.FINALIZED, finalizedAt: new Date(), finalizedByUserId: actorId },
-        include: INCLUDE,
+      await tx.inventoryBalance.upsert({
+        where: {
+          productId_locationId: {
+            productId: item.productId,
+            locationId: invoice.locationId,
+          },
+        },
+        create: {
+          productId: item.productId,
+          locationId: invoice.locationId,
+          quantity: item.quantity.negated(),
+        },
+        update: { quantity: { decrement: item.quantity } },
       });
+    }
 
-      await this.audit.log(
-        { userId: actorId, action: 'FINALIZE', entityType: 'SalesInvoice', entityId: invoice.id, afterData: { status: 'FINALIZED' } },
-        tx,
-      );
-
-      return finalized;
+    await this.customerLedger.postEntry(tx, {
+      customerId: invoice.customerId,
+      entryType: CustomerLedgerEntryType.INVOICE,
+      amount: invoice.totalAmount,
+      salesInvoiceId: invoice.id,
+      description: `Sales invoice ${invoice.invoiceNumber}`,
+      entryDate: invoice.invoiceDate,
+      createdByUserId: actorId,
     });
+
+    await this.transactions.record(tx, {
+      transactionType: TransactionType.SALES_INVOICE,
+      amount: invoice.totalAmount,
+      description: `Sales invoice ${invoice.invoiceNumber}`,
+      referenceType: 'SalesInvoice',
+      referenceId: invoice.id,
+      customerId: invoice.customerId,
+      createdByUserId: actorId,
+      transactionDate: invoice.invoiceDate,
+    });
+
+    const finalized = await tx.salesInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: SalesInvoiceStatus.FINALIZED,
+        finalizedAt: new Date(),
+        finalizedByUserId: actorId,
+      },
+      include: INCLUDE,
+    });
+
+    await this.audit.log(
+      {
+        userId: actorId,
+        action: 'FINALIZE',
+        entityType: 'SalesInvoice',
+        entityId: invoice.id,
+        afterData: { status: 'FINALIZED' },
+      },
+      tx,
+    );
+
+    return finalized;
   }
 
   async cancel(id: string, dto: CancelSalesInvoiceDto, actorId: string) {
     const strategy = await this.costingRegistry.resolve();
 
     return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.salesInvoice.findUnique({ where: { id }, include: { items: true } });
+      const invoice = await tx.salesInvoice.findUnique({
+        where: { id },
+        include: { items: true },
+      });
       if (!invoice) throw new NotFoundException('Sales invoice not found');
       if (invoice.status !== SalesInvoiceStatus.FINALIZED) {
-        throw new ConflictException(`Only a finalized sales invoice can be cancelled (current status: ${invoice.status})`);
+        throw new ConflictException(
+          `Only a finalized sales invoice can be cancelled (current status: ${invoice.status})`,
+        );
       }
 
       // A full cancel reverses the ENTIRE original quantity/amount. If any of it has already
       // been returned, that reversal would double-count — the return already undid those
       // units, so cancelling on top would restore them to stock a second time and double-count
       // the revenue reversal. Returns must be the only reversal path once any exist.
-      const existingReturn = await tx.salesReturn.findFirst({ where: { salesInvoiceId: id } });
+      const existingReturn = await tx.salesReturn.findFirst({
+        where: { salesInvoiceId: id },
+      });
       if (existingReturn) {
         throw new ConflictException(
           'This invoice already has sales returns against it and cannot be cancelled — process further corrections as returns instead',
@@ -354,9 +536,18 @@ export class SalesInvoicesService {
 
       for (const item of invoice.items) {
         const saleMovement = await tx.inventoryMovement.findFirst({
-          where: { salesInvoiceItemId: item.id, movementType: MovementType.SALE },
+          where: {
+            salesInvoiceItemId: item.id,
+            movementType: MovementType.SALE,
+          },
         });
-        const unitCost = saleMovement?.unitCost ?? (await strategy.getCurrentUnitCost(tx, item.productId, invoice.locationId));
+        const unitCost =
+          saleMovement?.unitCost ??
+          (await strategy.getCurrentUnitCost(
+            tx,
+            item.productId,
+            invoice.locationId,
+          ));
 
         await strategy.recordReceipt(tx, {
           productId: item.productId,
@@ -380,8 +571,17 @@ export class SalesInvoicesService {
         });
 
         await tx.inventoryBalance.upsert({
-          where: { productId_locationId: { productId: item.productId, locationId: invoice.locationId } },
-          create: { productId: item.productId, locationId: invoice.locationId, quantity: item.quantity },
+          where: {
+            productId_locationId: {
+              productId: item.productId,
+              locationId: invoice.locationId,
+            },
+          },
+          create: {
+            productId: item.productId,
+            locationId: invoice.locationId,
+            quantity: item.quantity,
+          },
           update: { quantity: { increment: item.quantity } },
         });
       }
@@ -407,7 +607,11 @@ export class SalesInvoicesService {
 
       const cancelled = await tx.salesInvoice.update({
         where: { id: invoice.id },
-        data: { status: SalesInvoiceStatus.CANCELLED, cancelledAt: new Date(), cancelReason: dto.reason },
+        data: {
+          status: SalesInvoiceStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancelReason: dto.reason,
+        },
         include: INCLUDE,
       });
 

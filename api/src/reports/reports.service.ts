@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { MovementType, Prisma, QuotationStatus, SalesInvoiceStatus } from '@prisma/client';
+import {
+  MovementType,
+  Prisma,
+  QuotationStatus,
+  SalesInvoiceStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../common/pagination.dto';
 import { ReportDateRangeQueryDto } from './dto/report-date-range-query.dto';
@@ -35,26 +40,49 @@ export class ReportsService {
     const dateFilter = this.dateFilter(query);
 
     const invoiceItems = await this.prisma.salesInvoiceItem.findMany({
-      where: { salesInvoice: { status: SalesInvoiceStatus.FINALIZED, invoiceDate: dateFilter } },
+      where: {
+        salesInvoice: {
+          status: SalesInvoiceStatus.FINALIZED,
+          invoiceDate: dateFilter,
+        },
+      },
       select: { id: true, productId: true, quantity: true, amount: true },
     });
     const saleMovements = await this.prisma.inventoryMovement.findMany({
-      where: { movementType: MovementType.SALE, salesInvoiceItemId: { in: invoiceItems.map((i) => i.id) } },
+      where: {
+        movementType: MovementType.SALE,
+        salesInvoiceItemId: { in: invoiceItems.map((i) => i.id) },
+      },
       select: { salesInvoiceItemId: true, unitCost: true },
     });
-    const saleCostByItemId = new Map(saleMovements.map((m) => [m.salesInvoiceItemId as string, m.unitCost ?? ZERO]));
+    const saleCostByItemId = new Map(
+      saleMovements.map((m) => [
+        m.salesInvoiceItemId as string,
+        m.unitCost ?? ZERO,
+      ]),
+    );
 
     const returnItems = await this.prisma.salesReturnItem.findMany({
       where: { salesReturn: { returnDate: dateFilter } },
       select: { id: true, productId: true, quantity: true, amount: true },
     });
     const returnMovements = await this.prisma.inventoryMovement.findMany({
-      where: { movementType: MovementType.RETURN_IN, salesReturnItemId: { in: returnItems.map((i) => i.id) } },
+      where: {
+        movementType: MovementType.RETURN_IN,
+        salesReturnItemId: { in: returnItems.map((i) => i.id) },
+      },
       select: { salesReturnItemId: true, unitCost: true },
     });
-    const returnCostByItemId = new Map(returnMovements.map((m) => [m.salesReturnItemId as string, m.unitCost ?? ZERO]));
+    const returnCostByItemId = new Map(
+      returnMovements.map((m) => [
+        m.salesReturnItemId as string,
+        m.unitCost ?? ZERO,
+      ]),
+    );
 
-    const products = await this.prisma.product.findMany({ include: { category: true } });
+    const products = await this.prisma.product.findMany({
+      include: { category: true },
+    });
     const productById = new Map(products.map((p) => [p.id, p]));
 
     interface Accumulator {
@@ -101,7 +129,9 @@ export class ReportsService {
         revenue: round2(acc.revenue),
         cost: round2(acc.cost),
         grossProfit: round2(grossProfit),
-        marginPct: acc.revenue.isZero() ? 0 : grossProfit.dividedBy(acc.revenue).times(100).toNumber(),
+        marginPct: acc.revenue.isZero()
+          ? 0
+          : grossProfit.dividedBy(acc.revenue).times(100).toNumber(),
       });
     }
     rows.sort((a, b) => b.revenue.comparedTo(a.revenue));
@@ -115,7 +145,15 @@ export class ReportsService {
       { revenue: ZERO, cost: ZERO, grossProfit: ZERO },
     );
 
-    const categoryTotals = new Map<string, { categoryName: string; revenue: Prisma.Decimal; cost: Prisma.Decimal; grossProfit: Prisma.Decimal }>();
+    const categoryTotals = new Map<
+      string,
+      {
+        categoryName: string;
+        revenue: Prisma.Decimal;
+        cost: Prisma.Decimal;
+        grossProfit: Prisma.Decimal;
+      }
+    >();
     for (const row of rows) {
       const existing = categoryTotals.get(row.categoryId) ?? {
         categoryName: row.categoryName,
@@ -133,10 +171,14 @@ export class ReportsService {
       dateFrom: query.dateFrom ?? null,
       dateTo: query.dateTo ?? null,
       products: rows,
-      categoryTotals: Array.from(categoryTotals.entries()).map(([categoryId, t]) => ({ categoryId, ...t })),
+      categoryTotals: Array.from(categoryTotals.entries()).map(
+        ([categoryId, t]) => ({ categoryId, ...t }),
+      ),
       totals: {
         ...totals,
-        marginPct: totals.revenue.isZero() ? 0 : totals.grossProfit.dividedBy(totals.revenue).times(100).toNumber(),
+        marginPct: totals.revenue.isZero()
+          ? 0
+          : totals.grossProfit.dividedBy(totals.revenue).times(100).toNumber(),
       },
     };
   }
@@ -167,11 +209,17 @@ export class ReportsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 50;
     const where: Prisma.TransactionWhereInput = {
-      ...(query.transactionType ? { transactionType: query.transactionType } : {}),
+      ...(query.transactionType
+        ? { transactionType: query.transactionType }
+        : {}),
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.supplierId ? { supplierId: query.supplierId } : {}),
-      ...(query.search ? { description: { contains: query.search, mode: 'insensitive' } } : {}),
-      ...(query.dateFrom || query.dateTo ? { transactionDate: { gte: query.dateFrom, lte: query.dateTo } } : {}),
+      ...(query.search
+        ? { description: { contains: query.search, mode: 'insensitive' } }
+        : {}),
+      ...(query.dateFrom || query.dateTo
+        ? { transactionDate: { gte: query.dateFrom, lte: query.dateTo } }
+        : {}),
     };
 
     const [rows, total] = await Promise.all([
@@ -186,19 +234,37 @@ export class ReportsService {
 
     // Transaction is deliberately FK-free (see schema comment), so the Customer/Party column
     // (RPT-01) is resolved here with two small batch lookups rather than a Prisma relation.
-    const customerIds = [...new Set(rows.map((r) => r.customerId).filter((id): id is string => !!id))];
-    const supplierIds = [...new Set(rows.map((r) => r.supplierId).filter((id): id is string => !!id))];
+    const customerIds = [
+      ...new Set(
+        rows.map((r) => r.customerId).filter((id): id is string => !!id),
+      ),
+    ];
+    const supplierIds = [
+      ...new Set(
+        rows.map((r) => r.supplierId).filter((id): id is string => !!id),
+      ),
+    ];
     const partyEmpty: { id: string; name: string }[] = [];
     const [customers, suppliers] = await Promise.all([
       customerIds.length
-        ? this.prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, name: true } })
+        ? this.prisma.customer.findMany({
+            where: { id: { in: customerIds } },
+            select: { id: true, name: true },
+          })
         : partyEmpty,
       supplierIds.length
-        ? this.prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } })
+        ? this.prisma.supplier.findMany({
+            where: { id: { in: supplierIds } },
+            select: { id: true, name: true },
+          })
         : partyEmpty,
     ]);
-    const customerNames = new Map<string, string>(customers.map((c): [string, string] => [c.id, c.name]));
-    const supplierNames = new Map<string, string>(suppliers.map((s): [string, string] => [s.id, s.name]));
+    const customerNames = new Map<string, string>(
+      customers.map((c): [string, string] => [c.id, c.name]),
+    );
+    const supplierNames = new Map<string, string>(
+      suppliers.map((s): [string, string] => [s.id, s.name]),
+    );
 
     const data = rows.map((r) => {
       const partyName: string | null =
@@ -217,20 +283,12 @@ export class ReportsService {
    * matching the query (nothing to mark read) and nothing can ever be duplicated.
    */
   async pendingActions() {
-    const [approvedQuotations, draftInvoices] = await Promise.all([
-      this.prisma.quotation.findMany({
-        where: { status: QuotationStatus.APPROVED, convertedInvoice: null },
-        include: { customer: true },
-        orderBy: { quotationDate: 'asc' },
-        take: 20,
-      }),
-      this.prisma.salesInvoice.findMany({
-        where: { status: SalesInvoiceStatus.DRAFT },
-        include: { customer: true },
-        orderBy: { invoiceDate: 'asc' },
-        take: 20,
-      }),
-    ]);
+    const approvedQuotations = await this.prisma.quotation.findMany({
+      where: { status: QuotationStatus.APPROVED, convertedInvoice: null },
+      include: { customer: true },
+      orderBy: { quotationDate: 'asc' },
+      take: 20,
+    });
 
     const actions = [
       ...approvedQuotations.map((q) => ({
@@ -239,13 +297,6 @@ export class ReportsService {
         customerName: q.customer.name,
         date: q.quotationDate,
         href: '/quotations',
-      })),
-      ...draftInvoices.map((inv) => ({
-        id: `invoice-${inv.id}`,
-        action: `Finalize and send invoice ${inv.invoiceNumber}`,
-        customerName: inv.customer.name,
-        date: inv.invoiceDate,
-        href: '/sales-invoices',
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
@@ -256,9 +307,18 @@ export class ReportsService {
     const customers = await this.prisma.customer.findMany({
       where: { currentBalance: { not: 0 } },
       orderBy: { currentBalance: 'desc' },
-      select: { id: true, name: true, phone: true, currentBalance: true, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        currentBalance: true,
+        isActive: true,
+      },
     });
-    const totalOutstanding = customers.reduce((sum, c) => sum.plus(c.currentBalance), ZERO);
+    const totalOutstanding = customers.reduce(
+      (sum, c) => sum.plus(c.currentBalance),
+      ZERO,
+    );
     return { customers, totalOutstanding };
   }
 
@@ -266,9 +326,18 @@ export class ReportsService {
     const suppliers = await this.prisma.supplier.findMany({
       where: { currentBalance: { not: 0 } },
       orderBy: { currentBalance: 'desc' },
-      select: { id: true, name: true, phone: true, currentBalance: true, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        currentBalance: true,
+        isActive: true,
+      },
     });
-    const totalPayable = suppliers.reduce((sum, s) => sum.plus(s.currentBalance), ZERO);
+    const totalPayable = suppliers.reduce(
+      (sum, s) => sum.plus(s.currentBalance),
+      ZERO,
+    );
     return { suppliers, totalPayable };
   }
 
@@ -277,7 +346,10 @@ export class ReportsService {
     const costs = await this.prisma.productCost.findMany({
       select: { quantityOnHandMirror: true, weightedAverageCost: true },
     });
-    const totalValue = costs.reduce((sum, c) => sum.plus(c.quantityOnHandMirror.times(c.weightedAverageCost)), ZERO);
+    const totalValue = costs.reduce(
+      (sum, c) => sum.plus(c.quantityOnHandMirror.times(c.weightedAverageCost)),
+      ZERO,
+    );
     return { totalValue: round2(totalValue) };
   }
 

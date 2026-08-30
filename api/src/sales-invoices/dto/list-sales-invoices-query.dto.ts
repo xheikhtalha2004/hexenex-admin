@@ -10,6 +10,11 @@ export class ListSalesInvoicesQueryDto extends PaginationQueryDto {
   @IsString()
   customerId?: string;
 
+  /** Matches the invoice number or the customer's name. */
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @IsOptional()
   @IsEnum(SalesInvoiceStatus)
   status?: SalesInvoiceStatus;

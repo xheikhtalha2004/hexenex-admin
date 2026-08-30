@@ -130,8 +130,7 @@ export default function DashboardPage() {
     queryFn: () => apiClient.get<Paginated<TransactionRow>>('/reports/transactions?pageSize=8'),
     enabled: hasPermission('reports.view'),
   });
-  // DSH-03: owner notifications for invoices that still need to be created (from an approved
-  // quotation) or finalized. Derived live from status, so completed items simply stop appearing.
+  // Owner notifications for approved quotations that still need to become invoices.
   const pendingActionsQuery = useQuery({
     queryKey: ['dashboard-pending-actions'],
     queryFn: () => apiClient.get<{ actions: PendingAction[] }>('/reports/pending-actions'),
@@ -197,7 +196,7 @@ export default function DashboardPage() {
               </span>
               {needsActionOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
             </CardTitle>
-            <CardDescription>Approved quotations waiting to become an invoice, and draft invoices waiting to be finalized.</CardDescription>
+            <CardDescription>Approved quotations waiting to become finalized invoices.</CardDescription>
           </CardHeader>
           {needsActionOpen && (
             <CardContent>

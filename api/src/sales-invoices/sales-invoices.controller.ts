@@ -15,7 +15,6 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/types/request-user';
 import { CreateSalesInvoiceDto } from './dto/create-sales-invoice.dto';
 import { ListSalesInvoicesQueryDto } from './dto/list-sales-invoices-query.dto';
-import { CancelSalesInvoiceDto } from './dto/cancel-sales-invoice.dto';
 import { CreateFromQuotationDto } from './dto/create-from-quotation.dto';
 import { PdfService } from '../pdf/pdf.service';
 import { CompanySettingsService } from '../company-settings/company-settings.service';
@@ -114,13 +113,4 @@ export class SalesInvoicesController {
     return this.salesInvoices.finalize(id, actor.id);
   }
 
-  @Post(':id/cancel')
-  @RequirePermissions('sales_invoice.cancel')
-  cancel(
-    @Param('id') id: string,
-    @Body() dto: CancelSalesInvoiceDto,
-    @CurrentUser() actor: RequestUser,
-  ) {
-    return this.salesInvoices.cancel(id, dto, actor.id);
-  }
 }
