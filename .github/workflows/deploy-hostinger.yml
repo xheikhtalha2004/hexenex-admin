@@ -82,8 +82,27 @@ jobs:
           SSHPASS: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
         run: |
           remote_archive="/home/${HOSTINGER_USER}/hostinger-${GITHUB_SHA}.tar.gz"
-          sshpass -e scp -P "$HOSTINGER_PORT" "hostinger-${GITHUB_SHA}.tar.gz" "${HOSTINGER_USER}@${HOSTINGER_HOST}:${remote_archive}"
-          sshpass -e ssh -p "$HOSTINGER_PORT" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+          ssh_opts=(-p "$HOSTINGER_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=30)
+
+          echo "Streaming release bundle to Hostinger via SSH..."
+          success=0
+          for attempt in 1 2 3; do
+            echo "Upload attempt $attempt of 3..."
+            if sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" "cat > '$remote_archive'" < "hostinger-${GITHUB_SHA}.tar.gz"; then
+              success=1
+              break
+            fi
+            echo "Upload attempt $attempt failed, retrying in 5 seconds..."
+            sleep 5
+          done
+
+          if [[ $success -ne 1 ]]; then
+            echo "Failed to upload release archive after 3 attempts." >&2
+            exit 1
+          fi
+
+          echo "Activating release on Hostinger..."
+          sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
             "bash -s -- '$HOSTINGER_APP_DIR' '$remote_archive'" < scripts/hostinger-deploy.sh
 
       - name: Verify production
