@@ -84,20 +84,40 @@ jobs:
           remote_archive="/home/${HOSTINGER_USER}/hostinger-${GITHUB_SHA}.tar.gz"
           ssh_opts=(-p "$HOSTINGER_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=30)
 
-          echo "Streaming release bundle to Hostinger via SSH..."
-          success=0
-          for attempt in 1 2 3; do
-            echo "Upload attempt $attempt of 3..."
-            if sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" "cat > '$remote_archive'" < "hostinger-${GITHUB_SHA}.tar.gz"; then
-              success=1
-              break
+          # Shared Hostinger SSH sessions terminate long continuous uploads.
+          # Transfer independently retryable 4 MiB chunks, then verify the
+          # reconstructed archive before running any deployment command.
+          archive="hostinger-${GITHUB_SHA}.tar.gz"
+          expected_sha="$(sha256sum "$archive" | awk '{print $1}')"
+          split -b 4M -d -a 4 "$archive" "${archive}.part-"
+          sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+            "rm -f '$remote_archive' && : > '$remote_archive'"
+
+          for chunk in "${archive}.part-"*; do
+            uploaded=0
+            for attempt in 1 2 3; do
+              echo "Uploading $(basename "$chunk") (attempt $attempt of 3)..."
+              if sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+                "cat >> '$remote_archive'" < "$chunk"; then
+                uploaded=1
+                break
+              fi
+              sleep 3
+            done
+            if [[ $uploaded -ne 1 ]]; then
+              sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+                "rm -f '$remote_archive'" || true
+              echo "Failed to upload $(basename "$chunk") after 3 attempts." >&2
+              exit 1
             fi
-            echo "Upload attempt $attempt failed, retrying in 5 seconds..."
-            sleep 5
           done
 
-          if [[ $success -ne 1 ]]; then
-            echo "Failed to upload release archive after 3 attempts." >&2
+          actual_sha="$(sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+            "sha256sum '$remote_archive' | cut -d ' ' -f 1")"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+              "rm -f '$remote_archive'" || true
+            echo "Uploaded release checksum mismatch." >&2
             exit 1
           fi
 
