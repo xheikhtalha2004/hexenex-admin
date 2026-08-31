@@ -10,11 +10,6 @@ if [[ "$APP_DIR" != "$EXPECTED_APP_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$APP_DIR/.env" ]]; then
-  echo "The production .env file is missing from $APP_DIR" >&2
-  exit 1
-fi
-
 if [[ ! -f "$ARCHIVE" ]]; then
   echo "Release archive was not uploaded: $ARCHIVE" >&2
   exit 1
@@ -68,7 +63,11 @@ cleanup() {
 trap cleanup EXIT
 
 tar -xzf "$ARCHIVE" -C "$STAGE_DIR"
-cp "$APP_DIR/.env" "$STAGE_DIR/.env"
+if [[ -f "$APP_DIR/.env" ]]; then
+  cp "$APP_DIR/.env" "$STAGE_DIR/.env"
+else
+  echo "Using Hostinger-managed environment variables (no filesystem .env present)."
+fi
 
 for required in dist prisma web/out node_modules package.json package-lock.json; do
   if [[ ! -e "$STAGE_DIR/$required" ]]; then
@@ -128,7 +127,9 @@ HTACCESS
 
 mkdir -p "$APP_DIR/tmp"
 chmod 755 "$APP_DIR" "$APP_DIR/tmp"
-chmod 600 "$APP_DIR/.env"
+if [[ -f "$APP_DIR/.env" ]]; then
+  chmod 600 "$APP_DIR/.env"
+fi
 chmod 644 "$APP_DIR/.htaccess" "$APP_DIR/package.json" "$APP_DIR/package-lock.json"
 touch "$APP_DIR/tmp/restart.txt"
 ACTIVATION_STARTED=0
