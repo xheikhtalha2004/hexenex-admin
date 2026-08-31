@@ -2,7 +2,7 @@ name: Deploy to Hostinger
 
 on:
   push:
-    branches: [main]
+    branches: [xheikh]
   workflow_dispatch:
 
 concurrency:
@@ -81,6 +81,11 @@ jobs:
 
       - name: Verify production
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 \
-            --output /dev/null \
-            https://slategrey-crocodile-436096.hostingersite.com/login/
+          base_url="https://slategrey-crocodile-436096.hostingersite.com"
+          login_html="$(curl --fail --silent --show-error --retry 5 --retry-delay 3 "$base_url/login/")"
+          css_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n 1)"
+          js_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.js' | head -n 1)"
+          test -n "$css_path"
+          test -n "$js_path"
+          curl --fail --silent --show-error --output /dev/null "$base_url$css_path"
+          curl --fail --silent --show-error --output /dev/null "$base_url$js_path"

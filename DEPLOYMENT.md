@@ -1,6 +1,6 @@
 # Hostinger deployment
 
-Production deploys automatically whenever a commit is pushed to the `main`
+Production deploys automatically whenever a commit is pushed to the `xheikh`
 branch. GitHub Actions builds both applications, uploads a release bundle over
 SSH, runs pending Prisma migrations, preserves the production `.env`, restarts
 Passenger, and verifies the login page.
@@ -16,7 +16,7 @@ workflow**.
 
 ## Normal deployment
 
-Merge reviewed changes into `main` and push them to GitHub. The deployment is
+Commit reviewed changes to `xheikh` and push them to GitHub. The deployment is
 then automatic; no ZIP upload is needed.
 
 Production URL:

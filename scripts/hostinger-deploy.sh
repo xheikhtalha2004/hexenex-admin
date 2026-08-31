@@ -26,17 +26,27 @@ STAGE_DIR="$(mktemp -d "/home/u571486348/.slabline-deploy.XXXXXX")"
 BACKUP_DIR="/home/u571486348/.slabline-rollback"
 ACTIVATION_STARTED=0
 
+clear_app_except_env() {
+  local current
+  shopt -s dotglob nullglob
+  for current in "$APP_DIR"/*; do
+    [[ "$(basename "$current")" == ".env" ]] && continue
+    rm -rf "$current"
+  done
+  shopt -u dotglob nullglob
+}
+
 cleanup() {
   local exit_code=$?
 
   if [[ $exit_code -ne 0 && $ACTIVATION_STARTED -eq 1 && -d "$BACKUP_DIR" ]]; then
     echo "Deployment failed during activation; restoring the previous release." >&2
-    for item in dist prisma web node_modules package.json package-lock.json; do
-      rm -rf "${APP_DIR:?}/${item}"
-      if [[ -e "$BACKUP_DIR/$item" ]]; then
-        mv "$BACKUP_DIR/$item" "$APP_DIR/$item"
-      fi
+    clear_app_except_env
+    shopt -s dotglob nullglob
+    for item in "$BACKUP_DIR"/*; do
+      mv "$item" "$APP_DIR/"
     done
+    shopt -u dotglob nullglob
     mkdir -p "$APP_DIR/tmp"
     touch "$APP_DIR/tmp/restart.txt"
   fi
@@ -51,6 +61,19 @@ trap cleanup EXIT
 tar -xzf "$ARCHIVE" -C "$STAGE_DIR"
 cp "$APP_DIR/.env" "$STAGE_DIR/.env"
 
+for required in dist prisma web/out package.json package-lock.json; do
+  if [[ ! -e "$STAGE_DIR/$required" ]]; then
+    echo "Release bundle is missing: $required" >&2
+    exit 1
+  fi
+done
+
+# Next.js static assets must be traversable by Passenger. ZIP-based Windows
+# deployments previously created `_next/static` as 0644, causing every CSS and
+# JavaScript request to fail with EACCES and leaving the browser blank.
+find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type d -exec chmod 755 {} +
+find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type f -exec chmod 644 {} +
+
 cd "$STAGE_DIR"
 npm ci --omit=dev
 npx prisma migrate deploy
@@ -59,14 +82,31 @@ rm -rf "$BACKUP_DIR"
 mkdir -p "$BACKUP_DIR"
 ACTIVATION_STARTED=1
 
+shopt -s dotglob nullglob
+for item in "$APP_DIR"/*; do
+  [[ "$(basename "$item")" == ".env" ]] && continue
+  mv "$item" "$BACKUP_DIR/"
+done
+shopt -u dotglob nullglob
+
 for item in dist prisma web node_modules package.json package-lock.json; do
-  if [[ -e "$APP_DIR/$item" ]]; then
-    mv "$APP_DIR/$item" "$BACKUP_DIR/$item"
-  fi
   mv "$STAGE_DIR/$item" "$APP_DIR/$item"
 done
 
+cat > "$APP_DIR/.htaccess" <<'HTACCESS'
+PassengerAppRoot /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html
+PassengerAppType node
+PassengerNodejs /opt/alt/alt-nodejs22/root/bin/node
+PassengerStartupFile dist/main.js
+PassengerBaseURI /
+PassengerRestartDir /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html/tmp
+SetEnv LSNODE_CONSOLE_LOG console.log
+HTACCESS
+
 mkdir -p "$APP_DIR/tmp"
+chmod 755 "$APP_DIR" "$APP_DIR/tmp"
+chmod 600 "$APP_DIR/.env"
+chmod 644 "$APP_DIR/.htaccess" "$APP_DIR/package.json" "$APP_DIR/package-lock.json"
 touch "$APP_DIR/tmp/restart.txt"
 ACTIVATION_STARTED=0
 
