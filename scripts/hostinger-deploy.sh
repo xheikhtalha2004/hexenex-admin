@@ -26,6 +26,15 @@ STAGE_DIR="$(mktemp -d "/home/u571486348/.slabline-deploy.XXXXXX")"
 BACKUP_DIR="/home/u571486348/.slabline-rollback"
 ACTIVATION_STARTED=0
 
+remove_deploy_tree() {
+  local target="$1"
+  [[ "$target" == /home/u571486348/.slabline-deploy.* || "$target" == "$BACKUP_DIR" ]] || return 1
+  if [[ -e "$target" ]]; then
+    chmod -R u+rwX "$target" 2>/dev/null || true
+    rm -rf "$target"
+  fi
+}
+
 clear_app_except_env() {
   local current
   shopt -s dotglob nullglob
@@ -51,8 +60,8 @@ cleanup() {
     touch "$APP_DIR/tmp/restart.txt"
   fi
 
-  rm -rf "$STAGE_DIR"
-  rm -rf "$BACKUP_DIR"
+  remove_deploy_tree "$STAGE_DIR"
+  remove_deploy_tree "$BACKUP_DIR"
   rm -f "$ARCHIVE"
   exit "$exit_code"
 }
@@ -92,7 +101,7 @@ else
   echo "No database migrations requested for this release."
 fi
 
-rm -rf "$BACKUP_DIR"
+remove_deploy_tree "$BACKUP_DIR"
 mkdir -p "$BACKUP_DIR"
 ACTIVATION_STARTED=1
 
