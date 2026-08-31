@@ -2,11 +2,11 @@ name: Deploy to Hostinger
 
 on:
   push:
-    branches: [xheikh]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: hostinger-production
+  group: hexenex-erp-production
   cancel-in-progress: false
 
 permissions:
@@ -17,10 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      HOSTINGER_HOST: 145.79.25.119
-      HOSTINGER_PORT: "65002"
-      HOSTINGER_USER: u571486348
-      HOSTINGER_APP_DIR: /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html
+      HOSTINGER_HOST: ${{ vars.HOSTINGER_HOST || '145.79.25.119' }}
+      HOSTINGER_PORT: ${{ vars.HOSTINGER_PORT || '65002' }}
+      HOSTINGER_USER: ${{ vars.HOSTINGER_USER || 'u571486348' }}
+      HOSTINGER_APP_DIR: ${{ vars.HOSTINGER_APP_DIR || '/home/u571486348/domains/hexenex.com/public_html/erp' }}
+      HOSTINGER_BASE_URL: ${{ vars.HOSTINGER_BASE_URL || 'https://erp.hexenex.com' }}
       HOSTINGER_SSH_PASSWORD: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
 
     steps:
@@ -87,7 +88,7 @@ jobs:
 
       - name: Verify production
         run: |
-          base_url="https://slategrey-crocodile-436096.hostingersite.com"
+          base_url="$HOSTINGER_BASE_URL"
           login_html="$(curl --fail --silent --show-error --retry 5 --retry-delay 3 "$base_url/login/")"
           css_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n 1)"
           js_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.js' | head -n 1)"

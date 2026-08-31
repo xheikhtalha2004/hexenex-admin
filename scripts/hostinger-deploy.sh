@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 APP_DIR="${1:?Application directory is required}"
 ARCHIVE="${2:?Release archive path is required}"
-EXPECTED_APP_DIR="/home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html"
+EXPECTED_APP_DIR="/home/u571486348/domains/hexenex.com/public_html/erp"
 
 if [[ "$APP_DIR" != "$EXPECTED_APP_DIR" ]]; then
   echo "Refusing to deploy to unexpected directory: $APP_DIR" >&2
@@ -15,15 +15,18 @@ if [[ ! -f "$ARCHIVE" ]]; then
   exit 1
 fi
 
+mkdir -p "$APP_DIR"
+chmod 755 "$APP_DIR"
+
 export PATH="/opt/alt/alt-nodejs22/root/usr/bin:/opt/alt/alt-nodejs20/root/usr/bin:$PATH"
 
-STAGE_DIR="$(mktemp -d "/home/u571486348/.slabline-deploy.XXXXXX")"
-BACKUP_DIR="/home/u571486348/.slabline-rollback"
+STAGE_DIR="$(mktemp -d "/home/u571486348/.hexerp-deploy.XXXXXX")"
+BACKUP_DIR="/home/u571486348/.hexerp-rollback"
 ACTIVATION_STARTED=0
 
 remove_deploy_tree() {
   local target="$1"
-  [[ "$target" == /home/u571486348/.slabline-deploy.* || "$target" == "$BACKUP_DIR" ]] || return 1
+  [[ "$target" == /home/u571486348/.hexerp-deploy.* || "$target" == "$BACKUP_DIR" ]] || return 1
   if [[ -e "$target" ]]; then
     chmod -R u+rwX "$target" 2>/dev/null || true
     rm -rf "$target"
@@ -115,13 +118,13 @@ for item in dist prisma web node_modules package.json package-lock.json; do
   mv "$STAGE_DIR/$item" "$APP_DIR/$item"
 done
 
-cat > "$APP_DIR/.htaccess" <<'HTACCESS'
-PassengerAppRoot /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html
+cat > "$APP_DIR/.htaccess" <<HTACCESS
+PassengerAppRoot ${APP_DIR}
 PassengerAppType node
 PassengerNodejs /opt/alt/alt-nodejs22/root/bin/node
 PassengerStartupFile dist/main.js
 PassengerBaseURI /
-PassengerRestartDir /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html/tmp
+PassengerRestartDir ${APP_DIR}/tmp
 SetEnv LSNODE_CONSOLE_LOG console.log
 HTACCESS
 
@@ -134,4 +137,4 @@ chmod 644 "$APP_DIR/.htaccess" "$APP_DIR/package.json" "$APP_DIR/package-lock.js
 touch "$APP_DIR/tmp/restart.txt"
 ACTIVATION_STARTED=0
 
-echo "Hostinger deployment completed successfully."
+echo "Hostinger deployment completed successfully at $APP_DIR."
