@@ -9,8 +9,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: 'Marble & Granite ERP',
-  description: 'Inventory, Invoicing & Financial Management System',
+  title: 'Hexenex ERP | Enterprise Resource Planning',
+  description: 'Hexenex Enterprise Management, Invoicing, Inventory & Financial System',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

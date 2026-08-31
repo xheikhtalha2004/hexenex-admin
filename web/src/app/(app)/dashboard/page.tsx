@@ -411,9 +411,9 @@ function Kpi({
 }) {
   const numeric = Number(value ?? 0);
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-1.5">
-        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</p>
+    <Card className="relative overflow-hidden border-border/70 shadow-xs hover:shadow-md transition-shadow">
+      <CardContent className="flex flex-col gap-2 p-4">
+        <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{label}</p>
         {loading ? (
           <Skeleton className="h-8 w-28 mt-0.5" />
         ) : hidden ? (
@@ -421,7 +421,7 @@ function Kpi({
         ) : (
           <p
             className={cn(
-              'text-[1.65rem] leading-none font-semibold tracking-tight font-mono tabular-nums',
+              'text-[1.65rem] leading-none font-bold tracking-tight font-mono tabular-nums',
               signed && (numeric < 0 ? 'text-destructive' : 'text-success'),
             )}
           >

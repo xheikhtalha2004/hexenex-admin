@@ -31,36 +31,47 @@ export function AppTopbar() {
   if (!user) return null;
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-      <SidebarTrigger />
-      <Separator orientation="vertical" className="h-6" />
-      <div className="flex-1" />
-      <Badge variant="secondary">{user.roleName.replace('_', ' ')}</Badge>
-      <DropdownMenu>
-        <DropdownMenuTrigger className="outline-none">
-          <Avatar className="size-8">
-            <AvatarFallback>{initials(user.fullName)}</AvatarFallback>
-          </Avatar>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className="flex flex-col">
-              <span className="font-medium">{user.fullName}</span>
-              <span className="text-xs text-muted-foreground">{user.email}</span>
-            </DropdownMenuLabel>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem render={<Link href="/profile" />}>
-            <UserRound className="mr-2 size-4" />
-            Profile &amp; password
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => logout()}>
-            <LogOut className="mr-2 size-4" />
-            Log out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background/80 px-4 backdrop-blur-md">
+      <div className="flex items-center gap-2">
+        <SidebarTrigger />
+        <Separator orientation="vertical" className="h-5" />
+        <span className="text-xs font-medium text-muted-foreground hidden sm:inline-block">
+          Hexenex Platform
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Badge variant="outline" className="text-xs font-semibold px-2.5 py-0.5 border-primary/20 bg-primary/5 text-primary">
+          {user.roleName.replace('_', ' ')}
+        </Badge>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring rounded-full">
+            <Avatar className="size-8.5 ring-1 ring-border shadow-xs">
+              <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
+                {initials(user.fullName)}
+              </AvatarFallback>
+            </Avatar>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 shadow-lg">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="flex flex-col gap-0.5">
+                <span className="font-semibold text-sm">{user.fullName}</span>
+                <span className="text-xs text-muted-foreground truncate">{user.email}</span>
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem render={<Link href="/profile" />}>
+              <UserRound className="mr-2 size-4" />
+              Profile &amp; Security
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => logout()} className="text-destructive focus:text-destructive">
+              <LogOut className="mr-2 size-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </header>
   );
 }

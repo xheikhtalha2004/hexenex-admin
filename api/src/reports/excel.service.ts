@@ -12,7 +12,7 @@ export interface ExcelColumn {
 export class ExcelService {
   async buildWorkbook(sheetName: string, columns: ExcelColumn[], rows: Record<string, unknown>[]): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Marble & Granite ERP';
+    workbook.creator = 'Hexenex ERP';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet(sheetName);

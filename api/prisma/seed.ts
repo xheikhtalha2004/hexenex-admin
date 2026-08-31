@@ -59,7 +59,7 @@ async function main() {
 
   console.log('Seeding default admin user...');
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: 'ADMIN' } });
-  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@marblefactory.local';
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@hexenex.com';
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!';
   const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
   if (!existingAdmin) {
@@ -67,7 +67,7 @@ async function main() {
       data: {
         email: adminEmail,
         passwordHash: await argon2.hash(adminPassword, { type: argon2.argon2id }),
-        fullName: 'System Administrator',
+        fullName: 'Hexenex Administrator',
         roleId: adminRole.id,
       },
     });
@@ -78,24 +78,24 @@ async function main() {
 
   console.log('Seeding locations...');
   await prisma.location.upsert({
-    where: { name: 'Factory' },
-    create: { name: 'Factory', type: 'FACTORY' },
+    where: { name: 'Main Office' },
+    create: { name: 'Main Office', type: 'FACTORY' },
     update: {},
   });
   await prisma.location.upsert({
-    where: { name: 'Showroom' },
-    create: { name: 'Showroom', type: 'SHOWROOM' },
+    where: { name: 'Operations Center' },
+    create: { name: 'Operations Center', type: 'SHOWROOM' },
     update: {},
   });
 
   console.log('Seeding product categories...');
-  const categories = ['Gangsaws', '24 Inch Counters', '36 Inch Counters', '52 Inch Counters', 'Resize Stock'];
+  const categories = ['Services', 'Hardware', 'Software', 'Supplies', 'General Inventory'];
   for (const name of categories) {
     await prisma.productCategory.upsert({ where: { name }, create: { name }, update: {} });
   }
 
   console.log('Seeding expense categories...');
-  const expenseCategories = ['Salaries', 'Utilities', 'Transport', 'Machine Maintenance', 'Other'];
+  const expenseCategories = ['Salaries', 'Utilities', 'Infrastructure', 'Marketing & Sales', 'Other'];
   for (const name of expenseCategories) {
     await prisma.expenseCategory.upsert({ where: { name }, create: { name }, update: {} });
   }
@@ -103,8 +103,8 @@ async function main() {
   console.log('Seeding company settings...');
   await prisma.companySettings.upsert({
     where: { id: 'default' },
-    create: { id: 'default', companyName: 'Marble & Granite Factory' },
-    update: {},
+    create: { id: 'default', companyName: 'Hexenex' },
+    update: { companyName: 'Hexenex' },
   });
 
   console.log('Seeding quotation calculation profiles...');

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Factory } from 'lucide-react';
+import { Hexagon } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -29,18 +29,23 @@ export function AppSidebar() {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
   
-  const appName = settingsQuery.data?.companyName || 'Marble & Granite ERP';
+  const appName = settingsQuery.data?.companyName || 'Hexenex';
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex items-center gap-2.5 px-2 py-2">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Factory className="size-4" />
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-primary to-primary/80 text-primary-foreground shadow-sm ring-1 ring-white/10">
+            <Hexagon className="size-4.5 fill-primary-foreground/20" />
           </div>
-          <span className="truncate text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            {appName}
-          </span>
+          <div className="flex flex-col truncate group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-sm font-bold tracking-tight text-sidebar-foreground">
+              {appName}
+            </span>
+            <span className="text-[10px] uppercase font-semibold tracking-wider text-sidebar-foreground/60">
+              Admin Suite
+            </span>
+          </div>
         </div>
       </SidebarHeader>
       <SidebarContent>
