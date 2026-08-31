@@ -61,7 +61,7 @@ trap cleanup EXIT
 tar -xzf "$ARCHIVE" -C "$STAGE_DIR"
 cp "$APP_DIR/.env" "$STAGE_DIR/.env"
 
-for required in dist prisma web/out package.json package-lock.json; do
+for required in dist prisma web/out node_modules package.json package-lock.json; do
   if [[ ! -e "$STAGE_DIR/$required" ]]; then
     echo "Release bundle is missing: $required" >&2
     exit 1
@@ -74,8 +74,13 @@ done
 find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type d -exec chmod 755 {} +
 find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type f -exec chmod 644 {} +
 
+# Production dependencies and Prisma's native engines are prepared on the
+# Linux GitHub runner. Hostinger's shared runtime aborts during Prisma's
+# postinstall, so activation must not run npm install on the server.
+test -f "$STAGE_DIR/node_modules/@prisma/client/package.json"
+test -d "$STAGE_DIR/node_modules/.prisma/client"
+
 cd "$STAGE_DIR"
-npm ci --omit=dev
 
 # Hostinger's shared runtime currently hangs Prisma's schema-engine process.
 # There are no new migrations in this release, so migrations are opt-in until

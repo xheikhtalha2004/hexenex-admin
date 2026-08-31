@@ -49,11 +49,16 @@ jobs:
           npm install
           npm run build
 
+      - name: Prepare Linux production dependencies
+        working-directory: api
+        run: npm prune --omit=dev
+
       - name: Create deployment bundle
         run: |
           mkdir -p .deploy-bundle/web
           cp -R api/dist .deploy-bundle/dist
           cp -R api/prisma .deploy-bundle/prisma
+          cp -R api/node_modules .deploy-bundle/node_modules
           cp -R web/out .deploy-bundle/web/out
           cp api/package.json api/package-lock.json .deploy-bundle/
           tar -czf "hostinger-${GITHUB_SHA}.tar.gz" -C .deploy-bundle .
