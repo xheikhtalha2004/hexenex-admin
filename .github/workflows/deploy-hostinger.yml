@@ -90,15 +90,19 @@ jobs:
           archive="hostinger-${GITHUB_SHA}.tar.gz"
           expected_sha="$(sha256sum "$archive" | awk '{print $1}')"
           split -b 4M -d -a 4 "$archive" "${archive}.part-"
-          sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-            "rm -f '$remote_archive' && : > '$remote_archive'"
 
+          first_chunk=1
           for chunk in "${archive}.part-"*; do
             uploaded=0
+            if [[ $first_chunk -eq 1 ]]; then
+              remote_write="cat > '$remote_archive'"
+            else
+              remote_write="cat >> '$remote_archive'"
+            fi
             for attempt in 1 2 3; do
               echo "Uploading $(basename "$chunk") (attempt $attempt of 3)..."
               if sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-                "cat >> '$remote_archive'" < "$chunk"; then
+                "$remote_write" < "$chunk"; then
                 uploaded=1
                 break
               fi
@@ -110,6 +114,7 @@ jobs:
               echo "Failed to upload $(basename "$chunk") after 3 attempts." >&2
               exit 1
             fi
+            first_chunk=0
           done
 
           actual_sha="$(sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
