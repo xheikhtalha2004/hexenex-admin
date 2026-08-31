@@ -89,10 +89,16 @@ jobs:
       - name: Verify production
         run: |
           base_url="$HOSTINGER_BASE_URL"
-          login_html="$(curl --fail --silent --show-error --retry 5 --retry-delay 3 "$base_url/login/")"
+          host_header="$(printf '%s' "$base_url" | sed -E 's|https?://([^/:]+).*|\1|')"
+          curl_opts=(--fail --silent --show-error --retry 5 --retry-delay 3 -k)
+          if [[ -n "$HOSTINGER_HOST" && -n "$host_header" ]]; then
+            curl_opts+=(--resolve "${host_header}:443:${HOSTINGER_HOST}" --resolve "${host_header}:80:${HOSTINGER_HOST}")
+          fi
+          login_html="$(curl "${curl_opts[@]}" "$base_url/login/")"
           css_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n 1)"
           js_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.js' | head -n 1)"
           test -n "$css_path"
           test -n "$js_path"
-          curl --fail --silent --show-error --output /dev/null "$base_url$css_path"
-          curl --fail --silent --show-error --output /dev/null "$base_url$js_path"
+          curl "${curl_opts[@]}" --output /dev/null "$base_url$css_path"
+          curl "${curl_opts[@]}" --output /dev/null "$base_url$js_path"
+          echo "Production verification succeeded."
