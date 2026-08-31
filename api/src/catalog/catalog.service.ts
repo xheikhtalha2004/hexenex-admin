@@ -57,7 +57,7 @@ export class CatalogService {
     const where: Prisma.ProductWhereInput = {
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-      ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
+      ...(query.search ? { name: { contains: query.search } } : {}),
     };
 
     const [data, total] = await Promise.all([

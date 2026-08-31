@@ -38,7 +38,7 @@ export class SettlementsController {
       this.settlements.findOrThrow(id),
       this.companySettings.get(),
     ]);
-    const html = settlementReceiptHtml(
+    const html = this.pdf.renderHtml(settlementReceiptHtml(
       {
         documentNumber: settlement.settlementNumber,
         amount: settlement.amount,
@@ -48,10 +48,9 @@ export class SettlementsController {
         settlementDate: settlement.settlementDate,
       },
       company,
-    );
-    const buffer = await this.pdf.renderHtmlToPdf(html);
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    ));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

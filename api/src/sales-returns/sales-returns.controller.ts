@@ -38,11 +38,9 @@ export class SalesReturnsController {
       this.salesReturns.findForPdf(id),
       this.companySettings.get(),
     ]);
-    const buffer = await this.pdf.renderHtmlToPdf(
-      salesReturnHtml(salesReturn, company),
-    );
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    const html = this.pdf.renderHtml(salesReturnHtml(salesReturn, company));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

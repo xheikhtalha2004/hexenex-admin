@@ -1,49 +1,17 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import type { Browser } from 'puppeteer';
+import { Injectable } from '@nestjs/common';
 
 /**
- * One long-lived headless Chromium instance shared across requests (launched lazily on first
- * use), rather than spawning a new browser process per PDF — Puppeteer's launch cost is high
- * enough that per-request launches would make every PDF endpoint noticeably slow.
+ * On Hostinger shared hosting, headless Chromium is not available.
+ * PDF endpoints now return self-contained HTML. The browser opens it in a new
+ * tab and `window.print()` (injected by the templates' document shell) produces
+ * the printout — identical layout, no server-side browser required.
+ *
+ * ponytail: browser-print ceiling — upgrade to pdfkit/playwright on VPS if
+ * server-generated PDFs for email attachments are ever needed.
  */
 @Injectable()
-export class PdfService implements OnModuleDestroy {
-  private browserPromise: Promise<Browser> | null = null;
-
-  private async getBrowser(): Promise<Browser> {
-    if (!this.browserPromise) {
-      const puppeteer = await import('puppeteer');
-      this.browserPromise = puppeteer.default.launch({
-        headless: true,
-        // Company logos can be hosted on customer-managed sites with an incomplete or
-        // self-signed certificate chain. This browser is isolated to PDF rendering only.
-        acceptInsecureCerts: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      });
-    }
-    return this.browserPromise;
-  }
-
-  async renderHtmlToPdf(html: string): Promise<Buffer> {
-    const browser = await this.getBrowser();
-    const page = await browser.newPage();
-    try {
-      await page.setContent(html, { waitUntil: 'load' });
-      const pdf = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
-      });
-      return Buffer.from(pdf);
-    } finally {
-      await page.close();
-    }
-  }
-
-  async onModuleDestroy() {
-    if (this.browserPromise) {
-      const browser = await this.browserPromise;
-      await browser.close();
-    }
+export class PdfService {
+  renderHtml(html: string): string {
+    return html;
   }
 }

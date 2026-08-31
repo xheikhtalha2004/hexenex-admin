@@ -1,4 +1,23 @@
 node_modules/
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.zip
+# Local SSH diagnostics created while investigating Hostinger. These may contain
+# credentials and must never be committed.
+/check_server.js
+/deploy.js
+/inspect_hbuilds.js
+/inspect_hostinger.js
+/read_passenger_logs.js
+/sync_and_test.js
+/test_db_creds.js
+/test_endpoints.js
+/test_pty.js
+/test_scp.js
+/deploy-package/
+/scratch/
 .local-postgres/
 .local-postgres.stdout.log
 .local-postgres.stderr.log

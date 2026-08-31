@@ -52,7 +52,7 @@ export class CustomerLedgerController {
       this.companySettings.get(),
     ]);
 
-    const html = statementHtml(
+    const html = this.pdf.renderHtml(statementHtml(
       {
         title: 'Customer Statement',
         documentNumber: customer.id.slice(-8).toUpperCase(),
@@ -61,10 +61,8 @@ export class CustomerLedgerController {
         entries: statement.data,
       },
       company,
-    );
-    const buffer = await this.pdf.renderHtmlToPdf(html);
-    // No filename here — see the comment in customer-payments.controller.ts's pdfDownload.
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    ));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 }

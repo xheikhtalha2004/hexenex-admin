@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 export class ApiError extends Error {
   constructor(
@@ -105,34 +105,26 @@ async function fetchBinary(path: string, isRetry = false): Promise<Blob> {
 }
 
 /**
- * Opens a PDF endpoint in a new tab using the browser's built-in viewer.
- *
- * Two Chrome-specific quirks had to be worked around here:
- *  1. The blank window must be opened synchronously, before the `await` below — once we've
- *     awaited anything, the browser no longer considers this a direct user gesture and
- *     silently blocks `window.open()` as a popup. Navigating an already-open window
- *     afterward is not affected by that restriction.
- *  2. The PDF endpoints deliberately respond with `Content-Type: application/octet-stream`,
- *     not `application/pdf` — a `fetch()` response with `Content-Type: application/pdf`
- *     gets intercepted by Chrome's built-in PDF-viewer machinery before it ever reaches this
- *     JS, and the fetch fails outright with a generic "Failed to fetch" (this is NOT limited
- *     to headless/automated Chrome — it reproduces in a normal Chrome window too). So we fetch
- *     as an opaque octet-stream, then relabel it as `application/pdf` ourselves via a fresh
- *     Blob — only the resulting blob: URL (opened below) needs the real PDF mimetype, and by
- *     then Chrome's viewer is happy to render it normally.
+ * Opens a PDF/print endpoint in a new tab. The API now returns self-contained HTML
+ * with a window.print() call in the template, so we simply navigate to it directly.
+ * The Authorization header is sent via the cookie (httpOnly refresh) — the access
+ * token is appended as a query param so the new tab can authenticate.
  */
 export async function openPdfInNewTab(path: string) {
   const newWindow = window.open('', '_blank');
   try {
-    const rawBlob = await fetchBinary(path);
-    const pdfBlob = new Blob([await rawBlob.arrayBuffer()], { type: 'application/pdf' });
-    const url = URL.createObjectURL(pdfBlob);
+    // Fetch the HTML through our authenticated client, then write it into the new tab.
+    // This keeps the Bearer token flow working without exposing the token in the URL.
+    const headers: Record<string, string> = {};
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+    const res = await fetch(`${API_URL}${path}`, { headers, credentials: 'include' });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    const html = await res.text();
     if (newWindow) {
-      newWindow.location.href = url;
-    } else {
-      window.open(url, '_blank');
+      newWindow.document.open();
+      newWindow.document.write(html);
+      newWindow.document.close();
     }
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   } catch (err) {
     newWindow?.close();
     throw err;

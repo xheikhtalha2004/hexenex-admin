@@ -34,10 +34,9 @@ export class QuotationsController {
   @Get(':id/pdf')
   async pdfDownload(@Param('id') id: string, @Res({ passthrough: true }) res: Response) {
     const [quotation, company] = await Promise.all([this.quotations.findForPdf(id), this.companySettings.get()]);
-    const buffer = await this.pdf.renderHtmlToPdf(quotationHtml(quotation, company));
-    // No filename here — see the comment in customer-payments.controller.ts's pdfDownload.
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    const html = this.pdf.renderHtml(quotationHtml(quotation, company));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

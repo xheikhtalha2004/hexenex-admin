@@ -35,8 +35,8 @@ export class QuotationsService {
       ...(query.search
         ? {
             OR: [
-              { quotationNumber: { contains: query.search, mode: 'insensitive' } },
-              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+              { quotationNumber: { contains: query.search } },
+              { customer: { name: { contains: query.search } } },
             ],
           }
         : {}),

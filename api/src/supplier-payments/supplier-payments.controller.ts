@@ -43,7 +43,7 @@ export class SupplierPaymentsController {
         where: { supplierPaymentId: id },
       }),
     ]);
-    const html = paymentReceiptHtml(
+    const html = this.pdf.renderHtml(paymentReceiptHtml(
       {
         documentNumber: payment.paymentNumber,
         title: 'Payment Voucher',
@@ -62,11 +62,9 @@ export class SupplierPaymentsController {
           : {}),
       },
       company,
-    );
-    const buffer = await this.pdf.renderHtmlToPdf(html);
-    // No filename here — see the comment in customer-payments.controller.ts's pdfDownload.
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    ));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

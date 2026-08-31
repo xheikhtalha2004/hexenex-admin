@@ -44,7 +44,7 @@ export class CustomerPaymentsController {
         where: { customerPaymentId: id },
       }),
     ]);
-    const html = paymentReceiptHtml(
+    const html = this.pdf.renderHtml(paymentReceiptHtml(
       {
         documentNumber: payment.paymentNumber,
         title: 'Payment Receipt',
@@ -65,15 +65,9 @@ export class CustomerPaymentsController {
           : {}),
       },
       company,
-    );
-    const buffer = await this.pdf.renderHtmlToPdf(html);
-    // Deliberately octet-stream, not application/pdf: a fetch() response whose Content-Type is
-    // application/pdf gets intercepted by Chrome's built-in PDF-viewer before it reaches page
-    // JS, failing the fetch outright ("Failed to fetch") — reproduces in normal Chrome, not just
-    // headless. The frontend (openPdfInNewTab in api-client.ts) relabels the blob as
-    // application/pdf itself once it already has the bytes, which Chrome's viewer is fine with.
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    ));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

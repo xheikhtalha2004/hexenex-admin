@@ -12,6 +12,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: 'export',
+  trailingSlash: true,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

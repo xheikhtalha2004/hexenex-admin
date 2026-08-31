@@ -1,0 +1,86 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hostinger-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HOSTINGER_HOST: 145.79.25.119
+      HOSTINGER_PORT: "65002"
+      HOSTINGER_USER: u571486348
+      HOSTINGER_APP_DIR: /home/u571486348/domains/slategrey-crocodile-436096.hostingersite.com/public_html
+      HOSTINGER_SSH_PASSWORD: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            web/package-lock.json
+
+      - name: Build API
+        working-directory: api
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Create deployment bundle
+        run: |
+          mkdir -p .deploy-bundle/web
+          cp -R api/dist .deploy-bundle/dist
+          cp -R api/prisma .deploy-bundle/prisma
+          cp -R web/out .deploy-bundle/web/out
+          cp api/package.json api/package-lock.json .deploy-bundle/
+          tar -czf "hostinger-${GITHUB_SHA}.tar.gz" -C .deploy-bundle .
+
+      - name: Install SSH password helper
+        run: |
+          test -n "$HOSTINGER_SSH_PASSWORD"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+      - name: Trust Hostinger SSH host key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -p "$HOSTINGER_PORT" -H "$HOSTINGER_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload and activate release
+        env:
+          SSHPASS: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
+        run: |
+          remote_archive="/home/${HOSTINGER_USER}/hostinger-${GITHUB_SHA}.tar.gz"
+          sshpass -e scp -P "$HOSTINGER_PORT" "hostinger-${GITHUB_SHA}.tar.gz" "${HOSTINGER_USER}@${HOSTINGER_HOST}:${remote_archive}"
+          sshpass -e ssh -p "$HOSTINGER_PORT" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
+            "bash -s -- '$HOSTINGER_APP_DIR' '$remote_archive'" < scripts/hostinger-deploy.sh
+
+      - name: Verify production
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 \
+            --output /dev/null \
+            https://slategrey-crocodile-436096.hostingersite.com/login/

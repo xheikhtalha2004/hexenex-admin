@@ -62,8 +62,8 @@ export class SalesInvoicesService {
       ...(query.search
         ? {
             OR: [
-              { invoiceNumber: { contains: query.search, mode: 'insensitive' } },
-              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+              { invoiceNumber: { contains: query.search } },
+              { customer: { name: { contains: query.search } } },
             ],
           }
         : {}),

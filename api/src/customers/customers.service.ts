@@ -26,9 +26,9 @@ export class CustomersService {
       ...(query.search
         ? {
             OR: [
-              { name: { contains: query.search, mode: 'insensitive' } },
-              { phone: { contains: query.search, mode: 'insensitive' } },
-              { email: { contains: query.search, mode: 'insensitive' } },
+              { name: { contains: query.search } },
+              { phone: { contains: query.search } },
+              { email: { contains: query.search } },
             ],
           }
         : {}),

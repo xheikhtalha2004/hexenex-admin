@@ -214,6 +214,7 @@ export function documentShell(params: {
 <head>
 <meta charset="utf-8" />
 <style>${BASE_STYLES}${extraStyles ?? ''}</style>
+<script>window.addEventListener('load', () => window.print());</script>
 </head>
 <body>
   <div class="page">

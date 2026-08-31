@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { NumberingModule } from './numbering/numbering.module';
@@ -28,9 +30,21 @@ import { ExpensesModule } from './expenses/expenses.module';
 import { ReportsModule } from './reports/reports.module';
 import { AccountsModule } from './accounts/accounts.module';
 
+import * as fs from 'node:fs';
+
+const staticPath = fs.existsSync(join(__dirname, '..', 'web', 'out'))
+  ? join(__dirname, '..', 'web', 'out')
+  : join(__dirname, '..', '..', 'web', 'out');
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ServeStaticModule.forRoot({
+      rootPath: staticPath,
+      // NestJS 11 / Express 5 uses path-to-regexp v8, which requires named
+      // wildcards. Keep API requests away from the static SPA fallback.
+      exclude: ['/api', '/api/{*path}'],
+    }),
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 120 }],
     }),

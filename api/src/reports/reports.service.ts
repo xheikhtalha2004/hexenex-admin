@@ -215,7 +215,7 @@ export class ReportsService {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.supplierId ? { supplierId: query.supplierId } : {}),
       ...(query.search
-        ? { description: { contains: query.search, mode: 'insensitive' } }
+        ? { description: { contains: query.search } }
         : {}),
       ...(query.dateFrom || query.dateTo
         ? { transactionDate: { gte: query.dateFrom, lte: query.dateTo } }

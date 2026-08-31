@@ -1,3 +1,6 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -10,14 +13,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
-  // This API is deliberately called cross-origin (separate frontend origin, in dev and
-  // typically in production too) — helmet's default same-origin CORP silently blocks the
-  // browser's Fetch/XHR from reading the response body even when CORS headers are correct.
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  app.use(helmet());
   app.use(cookieParser(config.get<string>('COOKIE_SECRET')));
 
-  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? 'http://localhost:3000').split(',');
-  app.enableCors({ origin: corsOrigins, credentials: true });
+  // In production (Hostinger), API and frontend are on the same origin — CORS is only
+  // needed for local dev where Next.js runs on a different port.
+  const corsOrigins = config.get<string>('CORS_ORIGINS');
+  if (corsOrigins) {
+    app.enableCors({ origin: corsOrigins.split(','), credentials: true });
+  }
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -30,7 +34,8 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const port = config.get<string>('PORT') ?? 4000;
+  const port = process.env.PORT || config.get<number>('PORT') || 3000;
   await app.listen(port);
+  console.log(`Application is running on port: ${port}`);
 }
 bootstrap();

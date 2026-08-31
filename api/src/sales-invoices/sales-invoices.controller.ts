@@ -51,15 +51,9 @@ export class SalesInvoicesController {
       this.salesInvoices.findForPdf(id),
       this.companySettings.get(),
     ]);
-    const buffer = await this.pdf.renderHtmlToPdf(
-      salesInvoiceHtml(invoice, company),
-    );
-    // No filename here — a "*.pdf" filename combined with the application/pdf mimetype makes
-    // Chrome's PDF-viewer intercept the response at the fetch() level (this is fetched as a
-    // blob via JS, not navigated to directly) — Content-Type alone is what the blob needs to
-    // render correctly once opened via a blob: URL.
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    const html = this.pdf.renderHtml(salesInvoiceHtml(invoice, company));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Get(':id/delivery-order/pdf')
@@ -71,11 +65,9 @@ export class SalesInvoicesController {
       this.salesInvoices.findForPdf(id),
       this.companySettings.get(),
     ]);
-    const buffer = await this.pdf.renderHtmlToPdf(
-      deliveryOrderHtml(invoice, company),
-    );
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    const html = this.pdf.renderHtml(deliveryOrderHtml(invoice, company));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

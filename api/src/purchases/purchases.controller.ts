@@ -38,11 +38,9 @@ export class PurchasesController {
       this.purchases.findForPdf(id),
       this.companySettings.get(),
     ]);
-    const buffer = await this.pdf.renderHtmlToPdf(
-      purchaseInvoiceHtml(invoice, company),
-    );
-    res.set({ 'Content-Type': 'application/octet-stream' });
-    res.send(buffer);
+    const html = this.pdf.renderHtml(purchaseInvoiceHtml(invoice, company));
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.send(html);
   }
 
   @Post()

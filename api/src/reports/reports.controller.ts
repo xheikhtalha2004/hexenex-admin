@@ -18,10 +18,9 @@ function sendExcel(res: Response, buffer: Buffer, filename: string) {
   res.send(buffer);
 }
 
-function sendPdf(res: Response, buffer: Buffer) {
-  // Deliberately octet-stream — see the comment in sales-invoices.controller.ts's pdfDownload.
-  res.set({ 'Content-Type': 'application/octet-stream' });
-  res.send(buffer);
+function sendHtml(res: Response, html: string) {
+  res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+  res.send(html);
 }
 
 @Controller('reports')
@@ -227,7 +226,7 @@ export class ReportsController {
       },
       company,
     );
-    return sendPdf(res, await this.pdf.renderHtmlToPdf(html));
+    return sendHtml(res, this.pdf.renderHtml(html));
   }
 
   @Get('transactions/pdf')
@@ -276,7 +275,7 @@ export class ReportsController {
       },
       company,
     );
-    return sendPdf(res, await this.pdf.renderHtmlToPdf(html));
+    return sendHtml(res, this.pdf.renderHtml(html));
   }
 
   @Get('customer-outstanding/pdf')
@@ -304,7 +303,7 @@ export class ReportsController {
       },
       company,
     );
-    return sendPdf(res, await this.pdf.renderHtmlToPdf(html));
+    return sendHtml(res, this.pdf.renderHtml(html));
   }
 
   @Get('supplier-payable/pdf')
@@ -332,6 +331,6 @@ export class ReportsController {
       },
       company,
     );
-    return sendPdf(res, await this.pdf.renderHtmlToPdf(html));
+    return sendHtml(res, this.pdf.renderHtml(html));
   }
 }

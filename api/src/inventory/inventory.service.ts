@@ -50,7 +50,7 @@ export class InventoryService {
           isActive: true,
           ...(query.categoryId ? { categoryId: query.categoryId } : {}),
           ...(query.productId ? { id: query.productId } : {}),
-          ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
+          ...(query.search ? { name: { contains: query.search } } : {}),
         },
         include: { category: true },
         orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
