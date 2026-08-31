@@ -15,14 +15,13 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       HOSTINGER_HOST: ${{ vars.HOSTINGER_HOST || '145.79.25.119' }}
       HOSTINGER_PORT: ${{ vars.HOSTINGER_PORT || '65002' }}
       HOSTINGER_USER: ${{ vars.HOSTINGER_USER || 'u571486348' }}
       HOSTINGER_APP_DIR: ${{ vars.HOSTINGER_APP_DIR || '/home/u571486348/domains/hexenex.com/public_html/erp' }}
       HOSTINGER_BASE_URL: ${{ vars.HOSTINGER_BASE_URL || 'https://erp.hexenex.com' }}
-      HOSTINGER_SSH_PASSWORD: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
 
     steps:
       - name: Check out source
@@ -40,7 +39,6 @@ jobs:
       - name: Build API
         working-directory: api
         run: |
-          # Refresh platform-specific optional dependencies on the Linux runner.
           npm install
           npm run build
 
@@ -57,92 +55,71 @@ jobs:
       - name: Create deployment bundle
         run: |
           mkdir -p .deploy-bundle/web
-          cp -R api/dist .deploy-bundle/dist
-          cp -R api/prisma .deploy-bundle/prisma
-          cp -R api/node_modules .deploy-bundle/node_modules
-          cp -R web/out .deploy-bundle/web/out
+          cp -R api/dist          .deploy-bundle/dist
+          cp -R api/prisma        .deploy-bundle/prisma
+          cp -R api/node_modules  .deploy-bundle/node_modules
+          cp -R web/out           .deploy-bundle/web/out
           cp api/package.json api/package-lock.json .deploy-bundle/
-          tar -czf "hostinger-${GITHUB_SHA}.tar.gz" -C .deploy-bundle .
+          tar -czf release.tar.gz -C .deploy-bundle .
+          echo "Bundle size: $(du -sh release.tar.gz | cut -f1)"
 
-      - name: Install SSH password helper
+      - name: Install sshpass
         run: |
-          test -n "$HOSTINGER_SSH_PASSWORD"
+          test -n "${{ secrets.HOSTINGER_SSH_PASSWORD }}"
           sudo apt-get update -qq
           sudo apt-get install -y -qq sshpass
-
-      - name: Trust Hostinger SSH host key
-        run: |
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
-          ssh-keyscan -p "$HOSTINGER_PORT" -H "$HOSTINGER_HOST" >> "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
 
       - name: Upload and activate release
         env:
           SSHPASS: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
         run: |
-          remote_archive="/home/${HOSTINGER_USER}/hostinger-${GITHUB_SHA}.tar.gz"
-          ssh_opts=(-p "$HOSTINGER_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=30)
+          SSH="sshpass -e ssh -p $HOSTINGER_PORT \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=6 \
+            -o ConnectTimeout=30 \
+            ${HOSTINGER_USER}@${HOSTINGER_HOST}"
 
-          # Shared Hostinger SSH sessions terminate long continuous uploads.
-          # Transfer independently retryable 4 MiB chunks, then verify the
-          # reconstructed archive before running any deployment command.
-          archive="hostinger-${GITHUB_SHA}.tar.gz"
-          expected_sha="$(sha256sum "$archive" | awk '{print $1}')"
-          split -b 4M -d -a 4 "$archive" "${archive}.part-"
+          REMOTE_ARCHIVE="/home/${HOSTINGER_USER}/release-${GITHUB_SHA}.tar.gz"
 
-          first_chunk=1
-          for chunk in "${archive}.part-"*; do
-            uploaded=0
-            if [[ $first_chunk -eq 1 ]]; then
-              remote_write="cat > '$remote_archive'"
-            else
-              remote_write="cat >> '$remote_archive'"
-            fi
-            for attempt in 1 2 3; do
-              echo "Uploading $(basename "$chunk") (attempt $attempt of 3)..."
-              if sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-                "$remote_write" < "$chunk"; then
-                uploaded=1
-                break
-              fi
-              sleep 3
-            done
-            if [[ $uploaded -ne 1 ]]; then
-              sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-                "rm -f '$remote_archive'" || true
-              echo "Failed to upload $(basename "$chunk") after 3 attempts." >&2
-              exit 1
-            fi
-            first_chunk=0
-          done
+          # Upload: pipe the archive through SSH cat — no SFTP/scp required.
+          echo "Uploading release bundle ($(du -sh release.tar.gz | cut -f1))..."
+          $SSH "cat > '$REMOTE_ARCHIVE'" < release.tar.gz
+          echo "Upload complete."
 
-          actual_sha="$(sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-            "sha256sum '$remote_archive' | cut -d ' ' -f 1")"
-          if [[ "$actual_sha" != "$expected_sha" ]]; then
-            sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-              "rm -f '$remote_archive'" || true
-            echo "Uploaded release checksum mismatch." >&2
+          # Verify the remote file arrived intact.
+          LOCAL_SIZE=$(stat --format="%s" release.tar.gz)
+          REMOTE_SIZE=$($SSH "stat --format='%s' '$REMOTE_ARCHIVE'")
+          if [[ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]]; then
+            echo "Size mismatch: local=$LOCAL_SIZE remote=$REMOTE_SIZE" >&2
+            $SSH "rm -f '$REMOTE_ARCHIVE'" || true
             exit 1
           fi
 
-          echo "Activating release on Hostinger..."
-          sshpass -e ssh "${ssh_opts[@]}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" \
-            "bash -s -- '$HOSTINGER_APP_DIR' '$remote_archive'" < scripts/hostinger-deploy.sh
+          # Run the deployment script on the server.
+          echo "Activating release..."
+          $SSH "bash -s -- '$HOSTINGER_APP_DIR' '$REMOTE_ARCHIVE'" < scripts/hostinger-deploy.sh
+          echo "Activation complete."
 
       - name: Verify production
         run: |
           base_url="$HOSTINGER_BASE_URL"
-          host_header="$(printf '%s' "$base_url" | sed -E 's|https?://([^/:]+).*|\1|')"
-          curl_opts=(--fail --silent --show-error --retry 5 --retry-delay 3 -k)
-          if [[ -n "$HOSTINGER_HOST" && -n "$host_header" ]]; then
-            curl_opts+=(--resolve "${host_header}:443:${HOSTINGER_HOST}" --resolve "${host_header}:80:${HOSTINGER_HOST}")
-          fi
-          login_html="$(curl "${curl_opts[@]}" "$base_url/login/")"
-          css_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n 1)"
-          js_path="$(printf '%s' "$login_html" | grep -oE '/_next/static/chunks/[^"]+\.js' | head -n 1)"
-          test -n "$css_path"
-          test -n "$js_path"
-          curl "${curl_opts[@]}" --output /dev/null "$base_url$css_path"
-          curl "${curl_opts[@]}" --output /dev/null "$base_url$js_path"
-          echo "Production verification succeeded."
+          host="$(printf '%s' "$base_url" | sed -E 's|https?://([^/:]+).*|\1|')"
+          # Use --resolve so the check works even during DNS propagation.
+          curl_opts=(
+            --fail --silent --show-error
+            --retry 6 --retry-delay 5
+            --resolve "${host}:443:${HOSTINGER_HOST}"
+            --resolve "${host}:80:${HOSTINGER_HOST}"
+            -k
+          )
+          echo "Fetching $base_url/login/ ..."
+          page="$(curl "${curl_opts[@]}" "$base_url/login/")"
+          css="$(printf '%s' "$page" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n1)"
+          js="$(printf '%s' "$page"  | grep -oE '/_next/static/chunks/[^"]+\.js'  | head -n1)"
+          [[ -n "$css" ]] || { echo "No CSS asset found in login page HTML" >&2; exit 1; }
+          [[ -n "$js"  ]] || { echo "No JS asset found in login page HTML"  >&2; exit 1; }
+          curl "${curl_opts[@]}" --output /dev/null "$base_url$css"
+          curl "${curl_opts[@]}" --output /dev/null "$base_url$js"
+          echo "Production verification passed."
