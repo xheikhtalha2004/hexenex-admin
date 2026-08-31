@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write   # needed to create/delete the temporary release
 
 jobs:
   deploy:
@@ -51,18 +51,38 @@ jobs:
       - name: Create deployment bundle
         run: |
           mkdir -p .deploy-bundle/web
-          cp -R api/dist                          .deploy-bundle/dist
-          cp -R api/prisma                        .deploy-bundle/prisma
-          cp -R web/out                           .deploy-bundle/web/out
-          cp api/package.json api/package-lock.json .deploy-bundle/
-          # Ship only the pre-compiled Prisma client (~2 MB) so the server
-          # never needs to run prisma generate or postinstall scripts.
           mkdir -p .deploy-bundle/node_modules/.prisma
-          cp -R api/node_modules/.prisma/client   .deploy-bundle/node_modules/.prisma/client
           mkdir -p .deploy-bundle/node_modules/@prisma
-          cp -R api/node_modules/@prisma/client   .deploy-bundle/node_modules/@prisma/client
+          cp -R api/dist                        .deploy-bundle/dist
+          cp -R api/prisma                      .deploy-bundle/prisma
+          cp -R web/out                         .deploy-bundle/web/out
+          cp api/package.json api/package-lock.json .deploy-bundle/
+          # Ship only the pre-compiled Prisma client (~2 MB).
+          # All other node_modules are installed on the server via npm install.
+          cp -R api/node_modules/.prisma/client  .deploy-bundle/node_modules/.prisma/client
+          cp -R api/node_modules/@prisma/client  .deploy-bundle/node_modules/@prisma/client
           tar -czf release.tar.gz -C .deploy-bundle .
           echo "Bundle size: $(du -sh release.tar.gz | cut -f1)"
+
+      - name: Publish bundle as temporary GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="deploy-${GITHUB_SHA:0:12}"
+          # Delete any leftover release from a previous run for this commit.
+          gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" 2>/dev/null || true
+
+          gh release create "$TAG" release.tar.gz \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Deploy bundle ${GITHUB_SHA:0:12}" \
+            --notes "Temporary deployment bundle — auto-deleted after deploy." \
+            --prerelease
+
+          BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/release.tar.gz"
+          echo "RELEASE_TAG=$TAG"         >> "$GITHUB_ENV"
+          echo "BUNDLE_URL=$BUNDLE_URL"   >> "$GITHUB_ENV"
+          echo "Published: $BUNDLE_URL"
 
       - name: Install sshpass
         run: |
@@ -70,44 +90,35 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq sshpass
 
-      - name: Upload and activate release
+      - name: Deploy on Hostinger
         env:
           SSHPASS: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
         run: |
-          SSH="sshpass -e ssh -p $HOSTINGER_PORT \
+          SSH_OPTS="-p $HOSTINGER_PORT \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ServerAliveInterval=10 \
             -o ServerAliveCountMax=6 \
-            -o ConnectTimeout=30 \
-            ${HOSTINGER_USER}@${HOSTINGER_HOST}"
-
+            -o ConnectTimeout=30"
+          SSH="sshpass -e ssh $SSH_OPTS ${HOSTINGER_USER}@${HOSTINGER_HOST}"
           REMOTE_ARCHIVE="/home/${HOSTINGER_USER}/release-${GITHUB_SHA}.tar.gz"
 
-          # Upload: pipe the archive through SSH cat — no SFTP/scp required.
-          echo "Uploading release bundle ($(du -sh release.tar.gz | cut -f1))..."
-          $SSH "cat > '$REMOTE_ARCHIVE'" < release.tar.gz
-          echo "Upload complete."
+          # Let the server pull the bundle directly from GitHub.
+          # No binary data piped over SSH stdin.
+          echo "Server downloading bundle from GitHub..."
+          $SSH "curl -fsSL '$BUNDLE_URL' -o '$REMOTE_ARCHIVE'"
+          echo "Download complete."
 
-          # Verify the remote file arrived intact.
-          LOCAL_SIZE=$(stat --format="%s" release.tar.gz)
-          REMOTE_SIZE=$($SSH "stat --format='%s' '$REMOTE_ARCHIVE'")
-          if [[ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]]; then
-            echo "Size mismatch: local=$LOCAL_SIZE remote=$REMOTE_SIZE" >&2
-            $SSH "rm -f '$REMOTE_ARCHIVE'" || true
-            exit 1
-          fi
-
-          # Run the deployment script on the server.
+          # Activate the release.
           echo "Activating release..."
-          $SSH "bash -s -- '$HOSTINGER_APP_DIR' '$REMOTE_ARCHIVE'" < scripts/hostinger-deploy.sh
+          $SSH "bash -s -- '$HOSTINGER_APP_DIR' '$REMOTE_ARCHIVE'" \
+            < scripts/hostinger-deploy.sh
           echo "Activation complete."
 
       - name: Verify production
         run: |
           base_url="$HOSTINGER_BASE_URL"
           host="$(printf '%s' "$base_url" | sed -E 's|https?://([^/:]+).*|\1|')"
-          # Use --resolve so the check works even during DNS propagation.
           curl_opts=(
             --fail --silent --show-error
             --retry 6 --retry-delay 5
@@ -119,8 +130,17 @@ jobs:
           page="$(curl "${curl_opts[@]}" "$base_url/login/")"
           css="$(printf '%s' "$page" | grep -oE '/_next/static/chunks/[^"]+\.css' | head -n1)"
           js="$(printf '%s' "$page"  | grep -oE '/_next/static/chunks/[^"]+\.js'  | head -n1)"
-          [[ -n "$css" ]] || { echo "No CSS asset found in login page HTML" >&2; exit 1; }
-          [[ -n "$js"  ]] || { echo "No JS asset found in login page HTML"  >&2; exit 1; }
+          [[ -n "$css" ]] || { echo "No CSS asset found in login page" >&2; exit 1; }
+          [[ -n "$js"  ]] || { echo "No JS asset found in login page"  >&2; exit 1; }
           curl "${curl_opts[@]}" --output /dev/null "$base_url$css"
           curl "${curl_opts[@]}" --output /dev/null "$base_url$js"
           echo "Production verification passed."
+
+      - name: Delete temporary release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" 2>/dev/null || true
+          echo "Temporary release cleaned up."
