@@ -76,7 +76,16 @@ find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type f -exec chmod 
 
 cd "$STAGE_DIR"
 npm ci --omit=dev
-npx prisma migrate deploy
+
+# Hostinger's shared runtime currently hangs Prisma's schema-engine process.
+# There are no new migrations in this release, so migrations are opt-in until
+# Hostinger resolves that runtime limitation. Set RUN_DATABASE_MIGRATIONS=1 in
+# the SSH environment only for a release that actually adds a migration.
+if [[ "${RUN_DATABASE_MIGRATIONS:-0}" == "1" ]]; then
+  timeout 120s npx prisma migrate deploy
+else
+  echo "No database migrations requested for this release."
+fi
 
 rm -rf "$BACKUP_DIR"
 mkdir -p "$BACKUP_DIR"

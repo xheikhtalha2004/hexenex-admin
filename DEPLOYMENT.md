@@ -21,3 +21,10 @@ then automatic; no ZIP upload is needed.
 
 Production URL:
 https://slategrey-crocodile-436096.hostingersite.com/login/
+
+## Database migrations
+
+Hostinger's current shared runtime hangs Prisma's schema engine, so application
+deployments do not run migrations unless `RUN_DATABASE_MIGRATIONS=1` is supplied
+to the remote deployment command. Enable it only when a reviewed release adds a
+new migration; the command is capped at 120 seconds.
