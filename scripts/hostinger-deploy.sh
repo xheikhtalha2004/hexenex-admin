@@ -85,11 +85,21 @@ done
 find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type d -exec chmod 755 {} +
 find "$STAGE_DIR/dist" "$STAGE_DIR/prisma" "$STAGE_DIR/web" -type f -exec chmod 644 {} +
 
-# Production dependencies and Prisma's native engines are prepared on the
-# Linux GitHub runner. Hostinger's shared runtime aborts during Prisma's
-# postinstall, so activation must not run npm install on the server.
-test -f "$STAGE_DIR/node_modules/@prisma/client/package.json"
-test -d "$STAGE_DIR/node_modules/.prisma/client"
+# Install production dependencies on the server, skipping postinstall scripts
+# (Prisma's postinstall hangs on Hostinger's shared runtime).
+export PATH="/opt/alt/alt-nodejs22/root/usr/bin:/opt/alt/alt-nodejs20/root/usr/bin:$PATH"
+cd "$STAGE_DIR"
+echo "Running npm install (ignore-scripts)..."
+npm install --omit=dev --ignore-scripts --no-audit --no-fund
+
+# Restore the pre-compiled Prisma client from the bundle (already in place
+# since we extracted the archive, but npm may have overwritten .prisma).
+if [[ -d "$STAGE_DIR/node_modules/.prisma/client" ]]; then
+  echo "Pre-compiled Prisma client present — skipping regeneration."
+else
+  echo "ERROR: .prisma/client missing after npm install" >&2
+  exit 1
+fi
 
 cd "$STAGE_DIR"
 
